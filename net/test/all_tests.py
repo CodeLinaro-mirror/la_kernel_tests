@@ -35,7 +35,6 @@ test_modules = [
     'pf_key_test',
     'ping6_test',
     'policy_crash_test',
-    'qtaguid_test',
     'removed_feature_test',
     'resilient_rs_test',
     'sock_diag_test',
@@ -51,7 +50,7 @@ test_modules = [
 ]
 
 if __name__ == '__main__':
-  namespace.IfPossibleEnterNewNetworkNamespace()
+  namespace.EnterNewNetworkNamespace()
 
   # If one or more tests were passed in on the command line, only run those.
   if len(sys.argv) > 1:
