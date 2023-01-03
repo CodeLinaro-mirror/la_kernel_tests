@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 #
 # Copyright 2020 The Android Open Source Project
 #
@@ -101,7 +101,8 @@ def ReMountSys():
 
 
 def SetFileContents(f, s):
-  open(f, 'w').write(s)
+  with open(f, 'w') as set_file:
+    set_file.write(s)
 
 
 def SetHostname(s):
@@ -122,7 +123,8 @@ def UnShare(flags):
 def DumpMounts(hdr):
   print('')
   print(hdr)
-  sys.stdout.write(open('/proc/mounts', 'r').read())
+  with open('/proc/mounts', 'r') as mounts:
+    sys.stdout.write(mounts.read())
   print('---')
 
 
