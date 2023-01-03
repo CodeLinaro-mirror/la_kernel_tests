@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 #
 # Copyright 2014 The Android Open Source Project
 #
@@ -57,6 +57,10 @@ IPV4_MARK_REFLECT_SYSCTL = "/proc/sys/net/ipv4/fwmark_reflect"
 IPV6_MARK_REFLECT_SYSCTL = "/proc/sys/net/ipv6/fwmark_reflect"
 
 HAVE_AUTOCONF_TABLE = os.path.isfile(AUTOCONF_TABLE_SYSCTL)
+
+
+class ConfigurationError(AssertionError):
+  pass
 
 
 class UnexpectedPacketError(AssertionError):
@@ -346,7 +350,8 @@ class MultiNetworkBaseTest(net_test.NetworkTest):
 
   @classmethod
   def GetSysctl(cls, sysctl):
-    return open(sysctl, "r").read()
+    with open(sysctl, "r") as sysctl_file:
+      return sysctl_file.read()
 
   @classmethod
   def SetSysctl(cls, sysctl, value):
@@ -355,7 +360,8 @@ class MultiNetworkBaseTest(net_test.NetworkTest):
     # correctly at the end.
     if sysctl not in cls.saved_sysctls:
       cls.saved_sysctls[sysctl] = cls.GetSysctl(sysctl)
-    open(sysctl, "w").write(str(value) + "\n")
+    with open(sysctl, "w") as sysctl_file:
+      sysctl_file.write(str(value) + "\n")
 
   @classmethod
   def SetIPv6SysctlOnAllIfaces(cls, sysctl, value):
@@ -368,7 +374,8 @@ class MultiNetworkBaseTest(net_test.NetworkTest):
   def _RestoreSysctls(cls):
     for sysctl, value in cls.saved_sysctls.items():
       try:
-        open(sysctl, "w").write(value)
+        with open(sysctl, "w") as sysctl_file:
+          sysctl_file.write(value)
       except IOError:
         pass
 
