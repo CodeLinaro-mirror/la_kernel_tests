@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 #
 # Copyright 2014 The Android Open Source Project
 #
@@ -40,9 +40,6 @@ IPV6_FLOWINFO = 11
 
 SYNCOOKIES_SYSCTL = "/proc/sys/net/ipv4/tcp_syncookies"
 TCP_MARK_ACCEPT_SYSCTL = "/proc/sys/net/ipv4/tcp_fwmark_accept"
-
-class ConfigurationError(AssertionError):
-  pass
 
 
 class OutgoingTest(multinetwork_base.MultiNetworkBaseTest):
@@ -858,7 +855,8 @@ class RATest(multinetwork_base.MultiNetworkBaseTest):
                        "no support for per-table autoconf")
   def testLeftoverRoutes(self):
     def GetNumRoutes():
-      return len(open("/proc/net/ipv6_route").readlines())
+      with open("/proc/net/ipv6_route") as ipv6_route:
+        return len(ipv6_route.readlines())
 
     num_routes = GetNumRoutes()
     for i in range(10, 20):
