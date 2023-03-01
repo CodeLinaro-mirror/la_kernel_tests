@@ -96,6 +96,32 @@ KERN_INFO = 6
 LINUX_VERSION = csocket.LinuxVersion()
 LINUX_ANY_VERSION = (0, 0)
 
+def KernelAtLeast(versions):
+  """Checks the kernel version matches the specified versions.
+
+  Args:
+    versions: a list of versions expressed as tuples,
+    e.g., [(5, 10, 108), (5, 15, 31)]. The kernel version matches if it's
+    between each specified version and the next minor version with last digit
+    set to 0. In this example, the kernel version must match either:
+      >= 5.10.108 and < 5.15.0
+      >= 5.15.31
+    While this is less flexible than matching exact tuples, it allows the caller
+    to pass in fewer arguments, because Android only supports certain minor
+    versions (4.19, 5.4, 5.10, ...)
+
+  Returns:
+    True if the kernel version matches, False otherwise
+  """
+  maxversion = (1000, 255, 65535)
+  for version in sorted(versions, reverse=True):
+    if version[:2] == maxversion[:2]:
+      raise ValueError("Duplicate minor version: %s %s", (version, maxversion))
+    if LINUX_VERSION >= version and LINUX_VERSION < maxversion:
+      return True
+    maxversion = (version[0], version[1], 0)
+  return False
+
 def ByteToHex(b):
   return "%02x" % (ord(b) if isinstance(b, str) else b)
 
@@ -213,35 +239,35 @@ def CreateSocketPair(family, socktype, addr):
 
 
 def GetInterfaceIndex(ifname):
-  s = UDPSocket(AF_INET)
-  ifr = struct.pack("%dsi" % IFNAMSIZ, ifname.encode(), 0)
-  ifr = fcntl.ioctl(s, scapy.SIOCGIFINDEX, ifr)
-  return struct.unpack("%dsi" % IFNAMSIZ, ifr)[1]
+  with UDPSocket(AF_INET) as s:
+    ifr = struct.pack("%dsi" % IFNAMSIZ, ifname.encode(), 0)
+    ifr = fcntl.ioctl(s, scapy.SIOCGIFINDEX, ifr)
+    return struct.unpack("%dsi" % IFNAMSIZ, ifr)[1]
 
 
 def SetInterfaceHWAddr(ifname, hwaddr):
-  s = UDPSocket(AF_INET)
-  hwaddr = hwaddr.replace(":", "")
-  hwaddr = binascii.unhexlify(hwaddr)
-  if len(hwaddr) != 6:
-    raise ValueError("Unknown hardware address length %d" % len(hwaddr))
-  ifr = struct.pack("%dsH6s" % IFNAMSIZ, ifname.encode(), scapy.ARPHDR_ETHER,
-                    hwaddr)
-  fcntl.ioctl(s, SIOCSIFHWADDR, ifr)
+  with UDPSocket(AF_INET) as s:
+    hwaddr = hwaddr.replace(":", "")
+    hwaddr = binascii.unhexlify(hwaddr)
+    if len(hwaddr) != 6:
+      raise ValueError("Unknown hardware address length %d" % len(hwaddr))
+    ifr = struct.pack("%dsH6s" % IFNAMSIZ, ifname.encode(), scapy.ARPHDR_ETHER,
+                      hwaddr)
+    fcntl.ioctl(s, SIOCSIFHWADDR, ifr)
 
 
 def SetInterfaceState(ifname, up):
   ifname_bytes = ifname.encode()
-  s = UDPSocket(AF_INET)
-  ifr = struct.pack("%dsH" % IFNAMSIZ, ifname_bytes, 0)
-  ifr = fcntl.ioctl(s, scapy.SIOCGIFFLAGS, ifr)
-  _, flags = struct.unpack("%dsH" % IFNAMSIZ, ifr)
-  if up:
-    flags |= scapy.IFF_UP
-  else:
-    flags &= ~scapy.IFF_UP
-  ifr = struct.pack("%dsH" % IFNAMSIZ, ifname_bytes, flags)
-  ifr = fcntl.ioctl(s, scapy.SIOCSIFFLAGS, ifr)
+  with UDPSocket(AF_INET) as s:
+    ifr = struct.pack("%dsH" % IFNAMSIZ, ifname_bytes, 0)
+    ifr = fcntl.ioctl(s, scapy.SIOCGIFFLAGS, ifr)
+    _, flags = struct.unpack("%dsH" % IFNAMSIZ, ifr)
+    if up:
+      flags |= scapy.IFF_UP
+    else:
+      flags &= ~scapy.IFF_UP
+    ifr = struct.pack("%dsH" % IFNAMSIZ, ifname_bytes, flags)
+    ifr = fcntl.ioctl(s, scapy.SIOCSIFFLAGS, ifr)
 
 
 def SetInterfaceUp(ifname):
