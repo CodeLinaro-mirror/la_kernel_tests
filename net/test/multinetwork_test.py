@@ -885,6 +885,9 @@ class RATest(multinetwork_base.MultiNetworkBaseTest):
   Pref64Option = cstruct.Struct("pref64_option", "!BBH12s",
                                 "type length lft_plc prefix")
 
+  def testHasAutoconfTable(self):
+    self.assertTrue(multinetwork_base.HAVE_AUTOCONF_TABLE)
+
   def testDoesNotHaveObsoleteSysctl(self):
     self.assertFalse(os.path.isfile(
         "/proc/sys/net/ipv6/route/autoconf_table_offset"))
@@ -1023,19 +1026,19 @@ class RATest(multinetwork_base.MultiNetworkBaseTest):
     netid = random.choice(self.NETIDS)
     iface = self.GetInterfaceName(netid)
     expected = iproute.IF_RS_SENT | iproute.IF_RA_RCVD | iproute.IF_READY
-    self.assertEquals(expected, GetInterfaceIpv6Flags(iface))
+    self.assertEqual(expected, GetInterfaceIpv6Flags(iface))
 
     self.SendRA(netid, m=1, o=0)
     expected |= iproute.IF_RA_MANAGED
-    self.assertEquals(expected, GetInterfaceIpv6Flags(iface))
+    self.assertEqual(expected, GetInterfaceIpv6Flags(iface))
 
     self.SendRA(netid, m=1, o=1)
     expected |= iproute.IF_RA_OTHERCONF
-    self.assertEquals(expected, GetInterfaceIpv6Flags(iface))
+    self.assertEqual(expected, GetInterfaceIpv6Flags(iface))
 
     self.SendRA(netid, m=0, o=1)
     expected &= ~iproute.IF_RA_MANAGED
-    self.assertEquals(expected, GetInterfaceIpv6Flags(iface))
+    self.assertEqual(expected, GetInterfaceIpv6Flags(iface))
 
 
 class PMTUTest(multinetwork_base.InboundMarkingTest):
