@@ -563,8 +563,6 @@ class TCPAcceptTest(multinetwork_base.InboundMarkingTest):
   def testIPv6ExplicitMark(self):
     self.CheckTCP(6, [self.MODE_EXPLICIT_MARK])
 
-@unittest.skipUnless(multinetwork_base.HAVE_AUTOCONF_TABLE,
-                     "need support for per-table autoconf")
 class RIOTest(multinetwork_base.MultiNetworkBaseTest):
   """Test for IPv6 RFC 4191 route information option
 
@@ -599,9 +597,15 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
     self.SetAcceptRaRtInfoMaxPlen(0)
     if multinetwork_base.HAVE_ACCEPT_RA_MIN_LFT:
       self.SetAcceptRaMinLft(0)
+    if multinetwork_base.HAVE_RA_HONOR_PIO_LIFE:
+      self.SetRaHonorPioLife(0)
 
   def GetRoutingTable(self):
-    return self._TableForNetid(self.NETID)
+    if multinetwork_base.HAVE_AUTOCONF_TABLE:
+      return self._TableForNetid(self.NETID)
+    else:
+      # main table
+      return 254
 
   def SetAcceptRaRtInfoMinPlen(self, plen):
     self.SetSysctl(
@@ -628,6 +632,14 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
   def GetAcceptRaMinLft(self):
     return int(self.GetSysctl(
         "/proc/sys/net/ipv6/conf/%s/accept_ra_min_lft" % self.IFACE))
+
+  def SetRaHonorPioLife(self, enabled):
+    self.SetSysctl(
+        "/proc/sys/net/ipv6/conf/%s/ra_honor_pio_life" % self.IFACE, enabled)
+
+  def GetRaHonorPioLife(self):
+    return int(self.GetSysctl(
+        "/proc/sys/net/ipv6/conf/%s/ra_honor_pio_life" % self.IFACE))
 
   def SendRIO(self, rtlifetime, plen, prefix, prf):
     options = scapy.ICMPv6NDOptRouteInfo(rtlifetime=rtlifetime, plen=plen,
@@ -681,6 +693,8 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
       self.SetAcceptRaRtInfoMaxPlen(plen)
       self.assertEqual(plen, self.GetAcceptRaRtInfoMaxPlen())
 
+  @unittest.skipUnless(multinetwork_base.HAVE_AUTOCONF_TABLE,
+                       "need support for per-table autoconf")
   def testZeroRtLifetime(self):
     PREFIX = "2001:db8:8901:2300::"
     RTLIFETIME = 73500
@@ -727,6 +741,8 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
     routes = self.FindRoutesWithDestination(PREFIX)
     self.assertFalse(routes)
 
+  @unittest.skipUnless(multinetwork_base.HAVE_AUTOCONF_TABLE,
+                       "need support for per-table autoconf")
   def testSimpleAccept(self):
     PREFIX = "2001:db8:8904:2345::"
     RTLIFETIME = 9993
@@ -741,6 +757,8 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
     self.AssertExpirationInRange(routes, RTLIFETIME, 1)
     self.DelRA6(PREFIX, PLEN)
 
+  @unittest.skipUnless(multinetwork_base.HAVE_AUTOCONF_TABLE,
+                       "need support for per-table autoconf")
   def testEqualMinMaxAccept(self):
     PREFIX = "2001:db8:8905:2345::"
     RTLIFETIME = 6326
@@ -755,6 +773,8 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
     self.AssertExpirationInRange(routes, RTLIFETIME, 1)
     self.DelRA6(PREFIX, PLEN)
 
+  @unittest.skipUnless(multinetwork_base.HAVE_AUTOCONF_TABLE,
+                       "need support for per-table autoconf")
   def testZeroLengthPrefix(self):
     PREFIX = "2001:db8:8906:2345::"
     RTLIFETIME = self.RA_VALIDITY * 2
@@ -776,6 +796,8 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
     self.AssertExpirationInRange(default, RTLIFETIME, 1)
     self.DelRA6(PREFIX, PLEN)
 
+  @unittest.skipUnless(multinetwork_base.HAVE_AUTOCONF_TABLE,
+                       "need support for per-table autoconf")
   def testManyRIOs(self):
     RTLIFETIME = 68012
     PLEN = 56
@@ -804,6 +826,25 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
     self.SetAcceptRaMinLft(500)
     self.assertEqual(500, self.GetAcceptRaMinLft())
 
+  @unittest.skipUnless(multinetwork_base.HAVE_RA_HONOR_PIO_LIFE,
+                       "need support for ra_honor_pio_life")
+  def testRaHonorPioLifeReadWrite(self):
+    self.assertEqual(0, self.GetRaHonorPioLife())
+    self.SetRaHonorPioLife(1)
+    self.assertEqual(1, self.GetRaHonorPioLife())
+
+  @unittest.skipUnless(multinetwork_base.HAVE_RA_HONOR_PIO_LIFE,
+                       "need support for ra_honor_pio_life")
+  def testRaHonorPioLife(self):
+    self.SetRaHonorPioLife(1)
+
+    # Test setup has sent an initial RA -- expire it.
+    self.SendRA(self.NETID, routerlft=0, piolft=0)
+    time.sleep(0.1) # Give the kernel time to notice our RA
+
+    # Assert that the address was deleted.
+    self.assertIsNone(self.MyAddress(6, self.NETID))
+
   @unittest.skipUnless(multinetwork_base.HAVE_ACCEPT_RA_MIN_LFT,
                        "need support for accept_ra_min_lft")
   def testAcceptRaMinLftRouterLifetime(self):
@@ -823,7 +864,10 @@ class RIOTest(multinetwork_base.MultiNetworkBaseTest):
     # RA with lifetime 600 is processed
     self.SendRA(self.NETID, routerlft=600)
     time.sleep(0.1) # Give the kernel time to notice our RA
-    self.assertEqual(1, len(self.FindRoutesWithGateway()))
+    # SendRA sets routerlft to 0 if HAVE_AUTOCONF_TABLE is false...
+    # TODO: Fix this correctly.
+    if multinetwork_base.HAVE_AUTOCONF_TABLE:
+      self.assertEqual(1, len(self.FindRoutesWithGateway()))
 
   @unittest.skipUnless(multinetwork_base.HAVE_ACCEPT_RA_MIN_LFT,
                        "need support for accept_ra_min_lft")
