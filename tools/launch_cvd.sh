@@ -56,11 +56,11 @@ function print_help() {
     echo "                        as ab://<branch>/<build_target>/<build_id>."
     echo "                        If not specified, it will use the platform build in the local"
     echo "                        repo, or the default compatible platform build for the kernel."
-    echo "  -sb <system_build>, --system-build=<system_build>"
-    echo "                        The system build path for GSI testing. Can be a local path or"
+    echo "  -gsi <gsi_build>, --gsi-build=<gsi_build>"
+    echo "                        The GSI build path for GSI testing. Can be a local path or"
     echo "                        remote build as ab://<branch>/<build_target>/<build_id>."
     echo "                        If not specified, no system build will be used."
-    echo "  -kb <kernel_build>, --kernel-build=<kernel_build>"
+    echo "  -kb <kernel_build>, --kernel-build=<kernel_build>, -gki <gki_build>, --gki-build=<gki_build>"
     echo "                        The kernel build path. Can be a local path or a remote build"
     echo "                        as ab://<branch>/<build_target>/<build_id>."
     echo "                        If not specified, it will use the kernel in the local repo."
@@ -94,7 +94,7 @@ function fail_error() {
 }
 
 function parse_args() {
-    while test $# -gt 0; do
+    while (( $# > 0 )); do
         case "$1" in
             -h|--help)
                 print_help
@@ -109,7 +109,7 @@ function parse_args() {
                 ;;
             -pb)
                 shift
-                if test $# -gt 0; then
+                if (( $# > 0 )); then
                     PLATFORM_BUILD="$1"
                 else
                     fail_error "platform build is not specified"
@@ -120,22 +120,48 @@ function parse_args() {
                 PLATFORM_BUILD="$(echo "$1" | sed -e "s/^[^=]*=//g")"
                 shift
                 ;;
+            -gsi)
+                shift
+                if (( $# > 0 )); then
+                    GSI_BUILD="$1"
+                else
+                    fail_error "system build is not specified"
+                fi
+                shift
+                ;;
+            --gsi-build=*)
+                GSI_BUILD="$(echo "$1" | sed -e "s/^[^=]*=//g")"
+                shift
+                ;;
             -sb)
                 shift
-                if test $# -gt 0; then
-                    SYSTEM_BUILD="$1"
+                if (( $# > 0 )); then
+                    GSI_BUILD="$1"
                 else
                     fail_error "system build is not specified"
                 fi
                 shift
                 ;;
             --system-build=*)
-                SYSTEM_BUILD="$(echo "$1" | sed -e "s/^[^=]*=//g")"
+                GSI_BUILD="$(echo "$1" | sed -e "s/^[^=]*=//g")"
+                shift
+                ;;
+            -gki)
+                shift
+                if (( $# > 0 )); then
+                    KERNEL_BUILD="$1"
+                else
+                    fail_error "GKI build path is not specified"
+                fi
+                shift
+                ;;
+            --gki-build=*)
+                KERNEL_BUILD="$(echo "$1" | sed -e "s/^[^=]*=//g")"
                 shift
                 ;;
             -kb)
                 shift
-                if test $# -gt 0; then
+               if (( $# > 0 )); then
                     KERNEL_BUILD="$1"
                 else
                     fail_error "kernel build path is not specified"
@@ -185,20 +211,20 @@ function create_kernel_build_cmd() {
     local android_version
     android_version=$(grep -oP "$regex" <(echo "$cf_kernel_version"))
     local build_cmd=""
-    if [ -f "$cf_kernel_repo_root/common-modules/virtual-device/BUILD.bazel" ]; then
+    if [[ -f "$cf_kernel_repo_root/common-modules/virtual-device/BUILD.bazel" ]]; then
         # support android-mainline, android16, android15, android14, android13
         build_cmd+="tools/bazel run"
-        if [ "$GCOV" = true ]; then
+        if [[ "$GCOV" == true ]]; then
             build_cmd+=" --gcov"
         fi
-        if [ "$DEBUG" = true ]; then
+        if [[ "$DEBUG" == true ]]; then
             build_cmd+=" --debug"
         fi
-        if [ "$KASAN" = true ]; then
+        if [[ "$KASAN" == true ]]; then
             build_cmd+=" --kasan"
         fi
         build_cmd+=" //common-modules/virtual-device:virtual_device_x86_64_dist"
-    elif [ -f "$cf_kernel_repo_root/build/build.sh" ]; then
+    elif [[ -f "$cf_kernel_repo_root/build/build.sh" ]]; then
         if [[ "$android_version" == "12" ]]; then
             build_cmd+="BUILD_CONFIG=common/build.config.gki.x86_64 build/build.sh"
             build_cmd+=" && "
@@ -225,7 +251,7 @@ function create_kernel_build_path() {
     local regex="((?<=android-)mainline|(\K\d+\.\d+(?=-stable)))|((?:android)\K\d+)"
     local android_version
     android_version=$(grep -oP "$regex" <(echo "$cf_kernel_version"))
-    if [ "$android_version" = "mainline" ] || greater_than_or_equal_to "$android_version" "14"; then
+    if [[ "$android_version" == "mainline" ]] || greater_than_or_equal_to "$android_version" "14"; then
         # support android-mainline, android16, android15, android14
         echo "out/virtual_device_x86_64/dist"
     elif greater_than_or_equal_to "$android_version" "11" || [[ "$android_version" == "4.19" ]]; then
@@ -243,13 +269,13 @@ function greater_than_or_equal_to() {
 
     # This regex matches strings formatted as floating-point or integer numbers
     local num_regex="^[0]([\.][0-9]+)?$|^[1-9][0-9]*([\.][0-9]+)?$"
-    if [[ ! "$num1" =~ $num_regex ]] || [[ ! "$num2" =~ $num_regex ]]; then
+    if [[ ! "$num1" =~ $num_regex || ! "$num2" =~ $num_regex ]]; then
         log_warn "Invalid numeric input for comparison: '$num1', '$num2'"
         return 1
     fi
 
     # Use bc for comparison
-    if [[ $(echo "$num1 >= $num2" | bc -l) -eq 1 ]]; then
+    if (( $(echo "$num1 >= $num2" | bc -l) == 1 )); then
         return 0
     else
         return 1
@@ -263,12 +289,12 @@ function find_repo() {
         *platform/superproject*)
             PLATFORM_REPO_ROOT="$PWD"
             PLATFORM_VERSION=$(grep -oP 'platform/superproject.*revision="\K[^"]*' <(echo "$manifest_output"))
-            if [ -z "$PLATFORM_VERSION" ]; then
+            if [[ -z "$PLATFORM_VERSION" ]]; then
                 # on main branch, <superproject> tag doesn't have a 'revision' attribute
                 # try to extract the information from <default> tag
                 PLATFORM_VERSION=$(grep -oP 'default revision="(refs/tags/)?\K[^"]*' <(echo "$manifest_output"))
             fi
-            if [ -z "$PLATFORM_VERSION" ]; then
+            if [[ -z "$PLATFORM_VERSION" ]]; then
                 fail_error "Could not find platform version information."
             fi
             log_info "PLATFORM_REPO_ROOT=$PLATFORM_REPO_ROOT, PLATFORM_VERSION=$PLATFORM_VERSION"
@@ -388,7 +414,7 @@ if [[ -n "$PLATFORM_BUILD" && "$PLATFORM_BUILD" != ab://* ]]; then
 
         # Set up build environment (lunch)
         log_info "Setting up platform build environment for product: $PRODUCT"
-        if [ -z "${TARGET_PRODUCT}" ] || [[ "${TARGET_PRODUCT}" != "$PRODUCT" ]]; then
+        if [[ -z "${TARGET_PRODUCT}" || "${TARGET_PRODUCT}" != "$PRODUCT" ]]; then
             log_info "TARGET_PRODUCT ('${TARGET_PRODUCT:-}') is not set or doesn't match '$PRODUCT'. Running lunch..."
             if ! set_platform_repo "$PRODUCT" "userdebug" "$PWD"; then ## Assumes 'userdebug' variant, might need flexibility?
                 fail_error "Failed to set platform build environment (lunch)." 1
@@ -419,18 +445,17 @@ if [[ -n "$PLATFORM_BUILD" && "$PLATFORM_BUILD" != ab://* ]]; then
 fi
 
 # 5. Handle System Build/Path
-if [ "$SKIP_BUILD" = false ] && [ -n "$SYSTEM_BUILD" ] && [[ "$SYSTEM_BUILD" != ab://* ]] \
-&& [ -d "$SYSTEM_BUILD" ]; then
+if [[ "$SKIP_BUILD" == false && -n "$GSI_BUILD" && "$GSI_BUILD" != ab://* && -d "$GSI_BUILD" ]]; then
     # Get GSI build
-    cd "$SYSTEM_BUILD" || fail_error "Failed to cd to $SYSTEM_BUILD"
-    SYSTEM_REPO_LIST_OUT=$(repo list 2>&1)
-    if [[ "$SYSTEM_REPO_LIST_OUT" != "error"* ]]; then
+    cd "$GSI_BUILD" || fail_error "Failed to cd to $GSI_BUILD"
+    GSI_REPO_LIST_OUT=$(repo list 2>&1)
+    if [[ "$GSI_REPO_LIST_OUT" != "error"* ]]; then
         go_to_repo_root "$PWD"
-        if [ -z "${TARGET_PRODUCT}" ] || [[ "${TARGET_PRODUCT}" != "${DEFAULT_GSI_PRODUCT}" ]]; then
+        if [[ -z "${TARGET_PRODUCT}" || "${TARGET_PRODUCT}" != "${DEFAULT_GSI_PRODUCT}" ]]; then
             log_warn "Build target product '${TARGET_PRODUCT}' does not match expected '${DEFAULT_GSI_PRODUCT}'. Reset build environment."
             set_platform_repo "${DEFAULT_GSI_PRODUCT}"
             rebuild_platform
-            SYSTEM_BUILD="${ANDROID_PRODUCT_OUT}/system.img"
+            GSI_BUILD="${ANDROID_PRODUCT_OUT}/system.img"
         fi
     fi
 fi
@@ -492,16 +517,16 @@ if  [[ -n "$KERNEL_BUILD" && "$KERNEL_BUILD" != ab://* ]]; then
 fi
 
 # 7. Find acloud Binary
-if [ -z "$ACLOUD_BIN" ] || ! [ -x "$ACLOUD_BIN" ]; then
+if [[ -z "$ACLOUD_BIN" || ! -x "$ACLOUD_BIN" ]]; then
     log_info "Acloud binary path not specified or is not executable(--acloud-bin). Searching..."
     if ACLOUD_BIN=$(which acloud 2>&1); then
         log_info "Use acloud binary from: ${ACLOUD_BIN}"
     else
         # Fallback to prebuilt location relative to a detected repo root
         potential_prebuilt_path=""
-        if [ -n "${PLATFORM_REPO_ROOT}" ]; then
+        if [[ -n "${PLATFORM_REPO_ROOT}" ]]; then
             potential_prebuilt_path="${PLATFORM_REPO_ROOT}/${ACLOUD_PREBUILT}"
-        elif  [ -n "${CF_KERNEL_REPO_ROOT}" ]; then
+        elif  [[ -n "${CF_KERNEL_REPO_ROOT}" ]]; then
             potential_prebuilt_path="${CF_KERNEL_REPO_ROOT}/${ACLOUD_PREBUILT}"
         fi
 
@@ -526,13 +551,13 @@ EXTRA_OPTIONS+=("$OPT_SKIP_PRERUNCHECK")
 
 # Add in branch if not specified
 # 8. Construct acloud Command Arguments
-if [ -z "$PLATFORM_BUILD" ]; then
+if [[ -z "$PLATFORM_BUILD" ]]; then
     log_warn "Platform build was not specified, and could not be determined from local repo. Will use the latest git_main build."
     acloud_cmd_parts+=("--branch" "git_main")
-elif [[ "$PLATFORM_BUILD" == ab://* ]]; then
+elif [[ "$PLATFORM_BUILD" = ab://* ]]; then
     ab_branch="" ab_target="" ab_id=""
     parse_ab_url "$PLATFORM_BUILD" ab_branch ab_target ab_id
-    if [[ $? -ne 0 ]]; then
+    if (( $? != 0 )); then
         fail_error "Platform Build URL $PLATFORM_BUILD parsing failed" 1
     fi
     acloud_cmd_parts+=("--branch" "${ab_branch}")
@@ -544,12 +569,12 @@ else
     acloud_cmd_parts+=("--local-image" "$PLATFORM_BUILD")
 fi
 
-if [ -z "$KERNEL_BUILD" ]; then
+if [[ -z "$KERNEL_BUILD" ]]; then
     log_warn "Flag --kernel-build is not set, will not launch Cuttlefish with different kernel."
 elif [[ "$KERNEL_BUILD" == ab://* ]]; then
     ab_branch="" ab_target="" ab_id=""
     parse_ab_url "$KERNEL_BUILD" ab_branch ab_target ab_id
-    if [[ $? -ne 0 ]]; then
+    if (( $? != 0 )); then
         fail_error "Kernel Build URL $KERNEL_BUILD parsing failed" 1
     fi
 
@@ -562,13 +587,13 @@ else
     acloud_cmd_parts+=("--local-kernel-image" "$KERNEL_BUILD")
 fi
 
-if [ -z "$SYSTEM_BUILD" ]; then
+if [[ -z "$GSI_BUILD" ]]; then
     log_warn "System build is not specified, will not launch Cuttlefish with GSI mixed build."
-elif [[ "$SYSTEM_BUILD" == ab://* ]]; then
+elif [[ "$GSI_BUILD" == ab://* ]]; then
     ab_branch="" ab_target="" ab_id=""
-    parse_ab_url "$SYSTEM_BUILD" ab_branch ab_target ab_id
-    if [[ $? -ne 0 ]]; then
-        fail_error "System Build URL $SYSTEM_BUILD parsing failed" 1
+    parse_ab_url "$GSI_BUILD" ab_branch ab_target ab_id
+    if (( $? != 0 )); then
+        fail_error "System Build URL $GSI_BUILD parsing failed" 1
     fi
     acloud_cmd_parts+=("--system-branch" "${ab_branch}")
     acloud_cmd_parts+=("--system-build-target" "${ab_target}")
@@ -576,7 +601,7 @@ elif [[ "$SYSTEM_BUILD" == ab://* ]]; then
         acloud_cmd_parts+=("--system-build-id" "${ab_id}")
     fi
 else
-    acloud_cmd_parts+=("--local-system-image" "$SYSTEM_BUILD")
+    acloud_cmd_parts+=("--local-system-image" "$GSI_BUILD")
 fi
 
 # 9. Execute acloud Command

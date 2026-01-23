@@ -23,9 +23,9 @@ BLUE="$(tput setaf 34)"
 function binary_checker() {
     if which fetch_artifact &> /dev/null; then
         FETCH_CMD="fetch_artifact"
-    elif [ ! -z "${FETCH_ARTIFACT}" ] && [ -f "${FETCH_ARTIFACT}" ]; then
+    elif [[ ! -z "${FETCH_ARTIFACT}" && -f "${FETCH_ARTIFACT}" ]]; then
         FETCH_CMD="${FETCH_ARTIFACT}"
-    elif [ -f "$DEFAULT_FETCH_ARTIFACT" ]; then
+    elif [[ -f "$DEFAULT_FETCH_ARTIFACT" ]]; then
         FETCH_CMD="$DEFAULT_FETCH_ARTIFACT"
     else
         log_error "The fetch_artifact is not found. Please run 'gcert' to make sure your workstation \
@@ -72,18 +72,36 @@ for i in "$@"; do
         ;;
     esac
 done
-if [ -z "$BUILD_INFO" ]; then
+if [[ -z "$BUILD_INFO" ]]; then
     log_error "$0 didn't come with the expected $BUILD_FORMAT"
 fi
 
 IFS='/' read -ra array <<< "$BUILD_INFO"
-if [ ${#array[@]} -lt 6 ]; then
+if (( ${#array[@]} < 6 )); then
     log_error "Invalid build format: $BUILD_INFO. Needs to be: $BUILD_FORMAT"
     exit 1
-elif [ ${#array[@]} -gt 7 ]; then
-    log_error "Invalid TEST_DIR format: $BUILD_INFO. Needs to be: $BUILD_FORMAT"
+elif (( ${#array[@]} > 7 )); then
+    log_error "Invalid build format: $BUILD_INFO. Needs to be: $BUILD_FORMAT"
     exit 1
+fi
+
+branch="${array[2]}"
+build_target="${array[3]}"
+build_id="${array[4]}"
+
+file_path="$DOWNLOAD_PATH/$branch/$build_target/$build_id"
+if [[ ! -d "$file_path" ]]; then
+    existing_file_name=""
 else
+    existing_file_name=$(find "$file_path" -maxdepth 1 -type f -name "${array[5]}")
+fi
+file_name="$file_path/${array[5]}"
+if [[ -f "$existing_file_name" ]]; then
+    log_info "Use the existing $existing_file_name. Skipping download."
+else
+    if [[ ! -d "$file_path" ]]; then
+        mkdir -p "$file_path"
+    fi
     fetch_cli+=" --branch ${array[2]}"
     fetch_cli+=" --target ${array[3]}"
     if [[ "${array[4]}" != latest* ]]; then
@@ -93,7 +111,8 @@ else
     fi
     fetch_cli+="$EXTRA_OPTIONS"
     fetch_cli+=" '${array[5]}'"
+    cd "$file_path"  || { log_error "Failed to go to $file_path"; exit 1; }
+    log_info "Downloading ${array[5]} to $file_path with command: $fetch_cli"
+    eval "$fetch_cli"
 fi
 
-log_info "Running command: $fetch_cli"
-eval "$fetch_cli"

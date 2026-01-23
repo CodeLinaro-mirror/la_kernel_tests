@@ -2,13 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0
 
 #
-# A simple script to run test with Tradefed.
+# A simple script to run test in the local Android development environment.
 #
 
-KERNEL_TF_PREBUILT=prebuilts/tradefed/filegroups/tradefed/tradefed.sh
 PLATFORM_TF_PREBUILT=tools/tradefederation/prebuilts/filegroups/tradefed/tradefed.sh
-DEFAULT_LOG_DIR=$PWD/out/test_logs/$(date +%Y%m%d_%H%M%S)
-DOWNLOAD_PATH="/tmp/downloaded_tests"
 GCOV=false
 CREATE_TRACEFILE_SCRIPT="kernel/tests/tools/create-tracefile.py"
 TRADEFED=
@@ -98,7 +95,7 @@ function run_atest_in_platform_repo() {
     sync_platform_repo "${product}" "${build_type}" "${repo_root_path}"
 
     local atest_cli=""
-    if [ "$USE_RBE" = false ]; then
+    if [[ "$USE_RBE" == false ]]; then
         atest_cli+="USE_RBE=false RBE_ENABLED=false "
     fi
     atest_cli+="atest ${TEST_NAMES[*]} -s $SERIAL_NUMBER --"
@@ -147,14 +144,14 @@ fi
 OLD_PWD=$PWD
 MY_NAME=$0
 
-while test $# -gt 0; do
+while (( $# > 0 )); do
     case "$1" in
         -h|--help)
             print_help
             ;;
         -s)
             shift
-            if test $# -gt 0; then
+            if (( $# > 0 )); then
                 SERIAL_NUMBER="$1"
             else
                 print_error "device serial is not specified"
@@ -167,7 +164,7 @@ while test $# -gt 0; do
             ;;
         -tl)
             shift
-            if test $# -gt 0; then
+            if (( $# > 0 )); then
                 LOG_DIR="$1"
             else
                 print_error "test log directory is not specified"
@@ -180,7 +177,7 @@ while test $# -gt 0; do
             ;;
         -td | -tb )
             shift
-            if test $# -gt 0; then
+            if (( $# > 0 )); then
                 TEST_DIR="$1"
             else
                 print_error "test directory is not specified"
@@ -193,7 +190,7 @@ while test $# -gt 0; do
             ;;
         -ta)
             shift
-            if test $# -gt 0; then
+            if (( $# > 0 )); then
                 TEST_ARGS+=("$1")
             else
                 print_error "test arg is not specified"
@@ -206,7 +203,7 @@ while test $# -gt 0; do
             ;;
         -t)
             shift
-            if test $# -gt 0; then
+            if (( $# > 0 )); then
                 TEST_NAMES+=("$1")
             else
                 print_error "test name is not specified"
@@ -219,7 +216,7 @@ while test $# -gt 0; do
             ;;
         -tf)
             shift
-            if test $# -gt 0; then
+            if (( $# > 0 )); then
                 TRADEFED="$1"
             else
                 print_error "tradefed binary is not specified"
@@ -245,13 +242,13 @@ while test $# -gt 0; do
 done
 
 # Ensure SERIAL_NUMBER is provided
-if [ -z "$SERIAL_NUMBER" ]; then
+if [[ -z "$SERIAL_NUMBER" ]]; then
     log_error "Device serial is not provided with flag -s <serial_number>."
     exit 1
 fi
 
 # Ensure TEST_NAMES is provided
-if [ -z "$TEST_NAMES" ]; then
+if [[ -z "$TEST_NAMES" ]]; then
     log_error "No test is specified with flag -t <test_name>."
     exit 1
 fi
@@ -268,6 +265,7 @@ fi
 
 REPO_ROOT_PATH="$PWD"
 readonly FETCH_SCRIPT="$REPO_ROOT_PATH/$FETCH_SCRIPT_PATH_IN_REPO"
+DEFAULT_LOG_DIR="$PWD/out/test_logs/$(date +%Y%m%d_%H%M%S)"
 
 log_info "Checking required commands..."
 if ! check_commands_available "${REQUIRED_COMMANDS[@]}"; then
@@ -276,7 +274,7 @@ if ! check_commands_available "${REQUIRED_COMMANDS[@]}"; then
 fi
 
 # Set default LOG_DIR if not provided
-if [ -z "$LOG_DIR" ]; then
+if [[ -z "$LOG_DIR" ]]; then
     LOG_DIR="$DEFAULT_LOG_DIR"
 fi
 
@@ -285,12 +283,12 @@ ABI=$(adb -s "$SERIAL_NUMBER" shell getprop ro.product.cpu.abi)
 PRODUCT=$(adb -s "$SERIAL_NUMBER" shell getprop ro.product.product.name)
 BUILD_TYPE=$(adb -s "$SERIAL_NUMBER" shell getprop ro.build.type)
 
-if [ -z "$TEST_DIR" ]; then
+if [[ -z "$TEST_DIR" ]]; then
     log_warn "Flag -td <test_dir> is not provided. Will use the default test directory"
     if [[ "$REPO_LIST_OUT" == *"build/make"* ]]; then
         # In the platform repo
         run_atest_in_platform_repo "${PRODUCT}" "${BUILD_TYPE}" "${REPO_ROOT_PATH}"
-    elif [[ "$BOARD" == "cutf"* ]] && [[ "$REPO_LIST_OUT" == *"common-modules/virtual-device"* ]]; then
+    elif [[ "$BOARD" == "cutf"* && "$REPO_LIST_OUT" == *"common-modules/virtual-device"* ]]; then
         # In the android kernel repo
         if [[ "$ABI" == "arm64"* ]]; then
             TEST_DIR="$REPO_ROOT_PATH/out/virtual_device_aarch64/dist/tests.zip"
@@ -304,11 +302,11 @@ the tests if there is change by: tools/bazel run //common-modules/virtual-device
             log_error "No test builds for $ABI Cuttlefish in $REPO_ROOT_PATH"
             exit 1
         fi
-    elif [[ "$BOARD" == "raven"* || "$BOARD" == "oriole"* ]] && [[ "$REPO_LIST_OUT" == *"private/google-modules/display"* ]]; then
+    elif [[ "$BOARD" == "raven"* || "$BOARD" == "oriole"* && "$REPO_LIST_OUT" == *"private/google-modules/display"* ]]; then
         TEST_DIR="$REPO_ROOT_PATH/out/slider/dist/tests.zip"
         log_warn "Will try find test $TEST_NAMES in $TEST_DIR. Please make sure you have re-build \
 the tests if there is change."
-    elif [[ "$ABI" == "arm64"* ]] && [[ "$REPO_LIST_OUT" == *"kernel/common"* ]]; then
+    elif [[ "$ABI" == "arm64"* && "$REPO_LIST_OUT" == *"kernel/common"* ]]; then
         TEST_DIR="$REPO_ROOT_PATH/out/kernel_aarch64/dist/tests.zip"
         log_warn "Will try find test $TEST_NAMES in $TEST_DIR. Please make sure you have re-build \
 the tests if there is change by: tools/bazel run //common:kernel_aarch64_dist."
@@ -325,30 +323,26 @@ for i in "${TEST_NAMES[@]}"; do
 done
 
 if [[ "$TEST_DIR" == ab://* ]]; then
-    if [ ! -d "$DOWNLOAD_PATH" ]; then
-        mkdir -p "$DOWNLOAD_PATH"
-    fi
-    cd "$DOWNLOAD_PATH" || { log_error "Failed to go to $DOWNLOAD_PATH"; exit 1; }
-    file_name=${TEST_DIR##*/}
-    eval "$FETCH_SCRIPT $TEST_DIR"
-    exit_code=$?
-    if [ $exit_code -eq 0 ]; then
-        log_info "$TEST_DIR is downloaded to $DOWNLOAD_PATH successfully"
-    else
-        log_error "Failed to download $TEST_DIR"
+    updated_ab_string=""
+    if ! convert_ab_string "$TEST_DIR" updated_ab_string; then
+        log_error "Invalid Android Build string $TEST_DIR."
         exit 1
     fi
-
-    file_name=$(ls $file_name)
-    # Check if the download was successful
-    if [ ! -f "${file_name}" ]; then
-        log_error "Failed to download ${file_name}"
+    eval "$FETCH_SCRIPT $updated_ab_string"
+    exit_code=$?
+    if (( exit_code == 0 )); then
+        log_info "$updated_ab_string is downloaded successfully"
+    else
+        log_error "Failed to download $updated_ab_string"
+        exit 1
     fi
+    file_name="${updated_ab_string/ab:\/\//}"
     TEST_DIR="$DOWNLOAD_PATH/$file_name"
-elif [ -n "$TEST_DIR" ]; then
-    if [ -d $TEST_DIR ]; then
+    cd "$REPO_ROOT_PATH"
+elif [[ -n "$TEST_DIR" ]]; then
+    if [[ -d $TEST_DIR ]]; then
         test_file_path=$TEST_DIR
-    elif [ -f "$TEST_DIR" ]; then
+    elif [[ -f "$TEST_DIR" ]]; then
         test_file_path=$(dirname "$TEST_DIR")
     else
         log_error "$TEST_DIR is neither a directory nor a file."
@@ -367,47 +361,49 @@ elif [ -n "$TEST_DIR" ]; then
 fi
 
 if [[ "$TRADEFED" == ab://* ]]; then
-    if [ ! -d "$DOWNLOAD_PATH" ]; then
-        mkdir -p "$DOWNLOAD_PATH"
+    updated_ab_string=""
+    if ! convert_ab_string "$TRADEFED" updated_ab_string; then
+        log_error "Invalid Android Build string $TRADEFED."
+        exit 1
     fi
-    cd $DOWNLOAD_PATH || { log_error "Fail to go to $DOWNLOAD_PATH"; exit 1; }
-    file_name=${TRADEFED##*/}
-    eval "$FETCH_SCRIPT $TRADEFED"
+    eval "$FETCH_SCRIPT $updated_ab_string"
     exit_code=$?
-    if [ $exit_code -eq 0 ]; then
-        log_info "$TRADEFED is downloaded to $DOWNLOAD_PATH successfully"
+    if (( exit_code == 0 )); then
+        log_info "$updated_ab_string is downloaded successfully"
     else
-        log_error "Failed to download $TRADEFED"
+        log_error "Failed to download $updated_ab_string"
         exit 1
     fi
 
-    file_name=$(ls $file_name)
+    file_name="$DOWNLOAD_PATH/${updated_ab_string/ab:\/\//}"
     # Check if the download was successful
-    if [[ ! -f "$DOWNLOAD_PATH/$file_name" ]]; then
+    if [[ ! -f "$file_name" ]]; then
         log_error "Failed to download ${file_name}"
         exit 1
     fi
-    base_file_name="${file_name%.*}"
-    tf_dir="$DOWNLOAD_PATH/$base_file_name"
-    if [ -d "$tf_dir" ]; then
-        rm -r "$tf_dir"
+    tf_dir="${file_name/.zip/}"
+    if [[ -d "$tf_dir" ]]; then
+        log_info "$file_name is already unzipped in $tf_dir. Skip Unzip."
+    else
+        unzip -oq "$file_name" -d "$tf_dir" || { log_error "Failed to unzip $file_name to $tf_dir"; exit 1; }
     fi
-    unzip -oq "$file_name" -d "$tf_dir" || { log_error "Failed to unzip $file_name to $tf_dir"; exit 1; }
     TRADEFED=$(find "$tf_dir" -type f -name "tradefed.sh" -executable)
-    if [ -z "$TRADEFED" ]; then
+    if [[ -z "$TRADEFED" ]]; then
         log_error "Could not find tradefed.sh in $tf_dir"
         exit 1
     fi
+    create_soft_link "$tf_dir" "$TRADEFED_DIR"
 fi
 
 cd "$REPO_ROOT_PATH"
 if [[ "$TEST_DIR" == *.zip ]]; then
     filename=${TEST_DIR##*/}
     new_test_dir="${TEST_DIR%.*}"
-    if [ -d "$new_test_dir" ]; then
-        rm -r "$new_test_dir"
+    if [[ -d "$new_test_dir" ]]; then
+        log_info "$TEST_DIR is already unzipped to $new_test_dir. No need to unzip again"
+    else
+        unzip -oq "$TEST_DIR" -d "$new_test_dir" || { log_error "Failed to unzip $TEST_DIR to $new_test_dir"; exit 1; }
     fi
-    unzip -oq "$TEST_DIR" -d "$new_test_dir" || { log_error "Failed to unzip $TEST_DIR to $new_test_dir"; exit 1; }
     case $filename in
         "android-vts.zip" | "android-cts.zip")
         new_test_dir+="/$(echo $filename | sed "s/.zip//g")"
@@ -430,20 +426,29 @@ if [[ -n "$tf_cli" && -n "$testcases_path" ]]; then
     TEST_DIR=$(dirname "$testcases_path")
     unset_android_environment
 else
-    if [ -n "$TRADEFED" ]; then
-        tf_cli="$TRADEFED run commandAndExit"
-    elif [ -f "${ANDROID_HOST_OUT}/bin/tradefed.sh" ] ; then
+    if [[ -n "$TRADEFED" ]]; then
+        if [[ "$REPO_LIST_OUT" == *"kernel/common"* ]]; then
+            # In Android kernel tree
+            tf_cli="JAVA_HOME=$KERNEL_JDK_PATH PATH=$KERNEL_JDK_PATH/bin:$PATH $TRADEFED run commandAndExit"
+        elif [[ "$REPO_LIST_OUT" == *"build/make"* ]]; then
+            # In Android platform tree
+            tf_cli="JAVA_HOME=$PLATFORM_JDK_PATH PATH=$PLATFORM_JDK_PATH/bin:$PATH $TRADEFED run commandAndExit"
+        else
+            tf_cli="$TRADEFED run commandAndExit"
+        fi
+    elif [[ -f "${ANDROID_HOST_OUT}/bin/tradefed.sh" ]]; then
         TRADEFED="${ANDROID_HOST_OUT}/bin/tradefed.sh"
         tf_cli="$TRADEFED run commandAndExit"
-    elif [ -f "$PLATFORM_TF_PREBUILT" ]; then
+    elif [[ -f "$PLATFORM_TF_PREBUILT" ]]; then
         TRADEFED="$PLATFORM_TF_PREBUILT"
         tf_cli="JAVA_HOME=$PLATFORM_JDK_PATH PATH=$PLATFORM_JDK_PATH/bin:$PATH $TRADEFED run commandAndExit"
-    elif [ -f "$KERNEL_TF_PREBUILT" ]; then
-        TRADEFED="$KERNEL_TF_PREBUILT"
-        tf_cli="JAVA_HOME=$KERNEL_JDK_PATH PATH=$KERNEL_JDK_PATH/bin:$PATH  $TRADEFED run commandAndExit"
+    elif [[ -f "${TRADEFED_DIR}/tradefed.sh" ]]; then
+        TRADEFED="${TRADEFED_DIR}/tradefed.sh"
+        tf_cli="$TRADEFED run commandAndExit"
     # No Tradefed found
     else
-        log_error "Can not find Tradefed binary. Please use flag -tf to specify the binary path."
+        log_error "Can not find Tradefed binary. Please use flag -tf to specify the binary path. \
+For example -tf ab://tradefed/tradefed/latest/tradefed.zip"
         exit 1
     fi
     log_info "Use Tradefed from $TRADEFED"
@@ -464,7 +469,7 @@ exit_code=$?
 
 if $GCOV; then
     create_tracefile_cli="$CREATE_TRACEFILE_SCRIPT -t $LOG_DIR -o $LOG_DIR/cov.info"
-    if [ -f $KERNEL_TF_PREBUILT ]; then
+    if [[ "$REPO_LIST_OUT" == *"kernel/common"* ]]; then
         log_info "Create tracefile with $create_tracefile_cli"
         $create_tracefile_cli && \
         log_info "Created tracefile at $LOG_DIR/cov.info"
@@ -497,7 +502,7 @@ if (( total_tests_number == 0 )); then
 fi
 
 failure_number=$(grep "FAILED[[:space:]]*:" "$INVOCATION_SUMMARY" | awk -F ":" '{print $NF}' | tr -d ' ')
-if [ -n "$failure_number" ]; then
+if [[ -n "$failure_number" ]]; then
     if (( failure_number == 0 )); then
         log_info "There is no test failure."
     elif (( failure_number == 1 )); then
