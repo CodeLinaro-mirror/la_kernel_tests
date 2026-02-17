@@ -11,7 +11,8 @@ set -euo pipefail
 MIX_SCRIPT_NAME="build_mixed_kernels_ramdisk"
 MIN_FASTBOOT_VERSION="35.0.2-12583183"
 VENDOR_KERNEL_IMGS=("boot.img" "initramfs.img" "dtb.img" "dtbo.img" "vendor_dlkm.img")
-VENDOR_KERNEL_IMGS_SPECIAL=("boot.img" "vendor_kernel_boot.img" "dtbo.img" "vendor_dlkm.img" "system_dlkm.img")
+# For Pixel kernel branches like kernel-pixel-android*-gs-pixel*
+VENDOR_KERNEL_IMGS_PIXEL_BRANCH=("boot.img" "vendor_kernel_boot.img" "dtbo.img" "vendor_dlkm.img" "system_dlkm.img")
 SKIP_UPDATE_BOOTLOADER=false
 SKIP_BUILD=false
 GCOV=false
@@ -20,6 +21,7 @@ KASAN=false
 DISABLE_VERIFICATION=true
 EXTRA_OPTIONS=()
 DEVICE_VARIANT="userdebug"
+DEVICE_LUNCH_TARGET=
 
 ABI=
 PRODUCT=
@@ -92,6 +94,9 @@ function print_help() {
     echo "  --device-variant=<device_variant>"
     echo "                        [Optional] Device variant such as userdebug, user, or eng."
     echo "                        If not specified, will be userdebug by default."
+    echo "  --device-lunch-target=<device_lunch_target>"
+    echo "                        [Optional] Device lunch target such as frankel_16k-trunk_pixel_kernel_6_12-userdebug."
+    echo "                        If not specified, will use default."
     echo "  -h, --help            Display this help message and exit"
     echo ""
     echo "Examples:"
@@ -231,6 +236,10 @@ function parse_arg() {
                 ;;
             --device-variant=*)
                 DEVICE_VARIANT=$(echo $1 | sed -e "s/^[^=]*=//g")
+                shift
+                ;;
+            --device-lunch-target=*)
+                DEVICE_LUNCH_TARGET=$(echo $1 | sed -e "s/^[^=]*=//g")
                 shift
                 ;;
             --skip-update-bootloader)
@@ -473,6 +482,10 @@ function format_ab_kernel_build_string() {
     fi
     if [[ -z "$_build_target" ]]; then
         _build_target="kernel_aarch64"
+    fi
+    if [[ "$_build_target" != kernel_aarch* ]]; then
+        log_error "The provided kernel build $KERNEL_BUILD is not an Android Common Kernel build target like kernel_aarch*"
+        exit 1
     fi
     if [[ -z "$_build_id" ]]; then
         _build_id="latest"
@@ -886,8 +899,8 @@ function download_vendor_kernel_for_direct_flash() {
     local _vendor_kernel_dir="$VENDOR_KERNEL_DIR/$DEVICE_SERIAL_NUMBER"
     local _image_patterns=("${VENDOR_KERNEL_IMGS[@]}")
 
-    if [[ "$_build_info" == *kernel-pixel-android16-gs-pixel-6.12* ]]; then
-        _image_patterns=("${VENDOR_KERNEL_IMGS_SPECIAL[@]}")
+    if [[ "$_build_info" == *kernel-pixel-android*-gs-pixel* ]]; then
+        _image_patterns=("${VENDOR_KERNEL_IMGS_PIXEL_BRANCH[@]}")
     fi
 
     log_info "Downloading vendor kernel artifacts ${_image_patterns[*]} from $VENDOR_KERNEL_BUILD"
@@ -945,7 +958,10 @@ or use a vendor kernel build by flag -vkb, such as ab://kernel-android*-gs-pixel
     local _flash_cmd="fastboot -s $FASTBOOT_SERIAL_NUMBER -w && sleep 5"
     if [[ "$DISABLE_VERIFICATION" == "true" ]]; then
         _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER oem disable-verification"
+    else
+        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER oem enable-verification"
     fi
+
     if [[ -f "$KERNEL_BUILD/boot-lz4.img" ]]; then
         _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash boot $KERNEL_BUILD/boot-lz4.img"
     elif [[ -f "$KERNEL_BUILD/boot-gz.img" ]]; then
@@ -1125,7 +1141,7 @@ pontis yet. If device booted up already, please visit https://pontis.corp.google
 where the device is attached to physically and make sure adb through pontis is connected. Please \
 enforce connection in the WebUI if the device shows up but is not yet connected. When adb server \
 on the host where the device is attached to physically is still running, the adb through pontis \
-will fail to connect autimatically, please try killing adb server (adb kill-server) on the host." 
+will fail to connect autimatically, please try killing adb server (adb kill-server) on the host."
             fi
         fi
         return 1 # Failure
@@ -1161,7 +1177,7 @@ function wait_for_device_in_adb() {
             log_level=1
         fi
         if check_adb_status "$log_level"; then
-            log_info "Device $DEVICE_SERIAL_NUMBER is ready in adb mode" 
+            log_info "Device $DEVICE_SERIAL_NUMBER is ready in adb mode"
             return 0 # Success
         fi
         sleep 10
@@ -1289,11 +1305,11 @@ function flash_platform_build() {
     [[ -x "$PLATFORM_REPO_ROOT/vendor/google/tools/flashall" ]]; then
         cd "$PLATFORM_REPO_ROOT" || { log_error "Fail to go to $PLATFORM_REPO_ROOT" && exit 1; }
         log_info "Flashing device by vendor/google/tools/flashall with platform build from ${PLATFORM_BUILD}"
-        if [[ -z "${TARGET_PRODUCT:-}" || "${TARGET_PRODUCT:-}" != *"$PRODUCT" ]]; then
+        if [[ -z "${TARGET_PRODUCT:-}" || "${TARGET_PRODUCT:-}" != *"$PRODUCT"* ]]; then
             if [[ "${PLATFORM_VERSION:-}" == aosp-* || "${PLATFORM_VERSION:-}" == AOSP* ]]; then
-                set_platform_repo "aosp_$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT"
+                set_platform_repo "aosp_$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT" "$DEVICE_LUNCH_TARGET"
             else
-                set_platform_repo "$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT"
+                set_platform_repo "$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT" "$DEVICE_LUNCH_TARGET"
             fi
         fi
         _flash_cmd="vendor/google/tools/flashall  --nointeractive -w -s $DEVICE_SERIAL_NUMBER"
@@ -1302,6 +1318,8 @@ function flash_platform_build() {
         prepare_to_flash_platform_build_from_local_directory
 
         _flash_cmd="$LOCAL_FLASH_CLI --nointeractive --force_flash_partitions -w -s $DEVICE_SERIAL_NUMBER"
+        # A workaround when the local flash CLI in Android kernel tree doesn't work
+        #_flash_cmd="$COMMON_LIB_LOCAL_FLASH_CLI --nointeractive --force_flash_partitions -w -s $DEVICE_SERIAL_NUMBER"
         if [[ "$DISABLE_VERIFICATION" == "true" ]]; then
             _flash_cmd+=" --disable_verity --disable_verification"
         fi
@@ -1378,7 +1396,7 @@ function flash_gsi_build() {
         fi
         if [[ -f "$GSI_BUILD/pvmfw.img" && "$_pvmfw_partition_output" == *yes* \
         && "$PRODUCT" != "raven" && "$PRODUCT" != "oriole" ]]; then
-            _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot bootloader"
+            _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot bootloader && sleep 3"
             _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash pvmfw $GSI_BUILD/pvmfw.img"
         fi
         _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
@@ -1823,6 +1841,10 @@ log_info "PLATFORM_BUILD=$PLATFORM_BUILD, KERNEL_BUILD=$KERNEL_BUILD, VENDOR_KER
 [[ "${VENDOR_KERNEL_BUILD,,}" == "none" ]] && VENDOR_KERNEL_BUILD=""
 
 # --- Platform Build Processing ---
+if [[ "$PLATFORM_BUILD" == ab:://* ]]; then
+    log_warn "The platform ab build string should start with 'ab://', not 'ab:://'. Remove the redundant ':'"
+    PLATFORM_BUILD="${PLATFORM_BUILD/::\/\//:\/\/}"
+fi
 if [[ "$PLATFORM_BUILD" == ab://* ]]; then
     format_ab_platform_build_string
 elif [[ -n "$PLATFORM_BUILD" && -d "$PLATFORM_BUILD" ]]; then
@@ -1840,16 +1862,18 @@ elif [[ -n "$PLATFORM_BUILD" && -d "$PLATFORM_BUILD" ]]; then
     fi
     if [[ "$PLATFORM_REPO_ROOT" == "$PLATFORM_BUILD" ]]; then
         if [[ "$SKIP_BUILD" == "false" ]]; then
-            if [[ -z "${TARGET_PRODUCT:-}" || "${TARGET_PRODUCT:-}" != *"$PRODUCT" ]]; then
+            if [[ -n "$DEVICE_LUNCH_TARGET" ]]; then
+                set_platform_repo  "$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT" "$DEVICE_LUNCH_TARGET"
+            elif [[ -z "${TARGET_PRODUCT:-}" || "${TARGET_PRODUCT:-}" != *"$PRODUCT"* ]]; then
                 if [[ "${PLATFORM_VERSION:-}" == aosp-* || "${PLATFORM_VERSION:-}" == AOSP* ]]; then
-                    set_platform_repo "aosp_$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT"
+                    set_platform_repo "aosp_$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT" "$DEVICE_LUNCH_TARGET"
                 else
-                    set_platform_repo "$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT"
+                    set_platform_repo "$PRODUCT" "userdebug" "$PLATFORM_REPO_ROOT" "$DEVICE_LUNCH_TARGET"
                 fi
             elif [[ "${TARGET_PRODUCT:-}" == *"$PRODUCT" ]]; then
                 echo "TARGET_PRODUCT=${TARGET_PRODUCT}, ANDROID_PRODUCT_OUT=${ANDROID_PRODUCT_OUT}"
             fi
-            if [[ "${TARGET_PRODUCT:-}" == *"$PRODUCT" ]]; then
+            if [[ "${TARGET_PRODUCT:-}" == *"$PRODUCT"* ]]; then
                 build_platform
             else
                 log_error "Can not build platform build due to lunch build target failure"
@@ -1875,7 +1899,7 @@ elif [[ -n "$PLATFORM_BUILD" && -d "$PLATFORM_BUILD" ]]; then
             log_info "Use platform build from $PLATFORM_BUILD"
         else
             log_error "Can't find valid image in $PLATFORM_BUILD"
-            exit
+            exit 1
         fi
     fi
 fi
@@ -1884,7 +1908,17 @@ log_info "PLATFORM_BUILD=$PLATFORM_BUILD, KERNEL_BUILD=$KERNEL_BUILD, VENDOR_KER
 
 find_flashstation_binary
 
+# --- Android Common Kernel Build (GKI) processing ---
+if [[ "$KERNEL_BUILD" == ab:://* ]]; then
+    log_warn "The kernel ab build string should start with 'ab://', not 'ab:://'. Remove the redundant ':'"
+    KERNEL_BUILD="${KERNEL_BUILD/::\/\//:\/\/}"
+fi
+
 if [[ "$KERNEL_BUILD" == ab://* ]]; then
+    if [[ "$KERNEL_BUILD" == *raviole* ]]; then
+        log_error "$KERNEL_BUILD is a vendor kernel build. Please use -vkb flag to specify a vendor kernel build"
+        exit 1
+    fi
     format_ab_kernel_build_string
     download_kernel_build
 elif [[ -n "$KERNEL_BUILD" && -d "$KERNEL_BUILD" ]]; then
@@ -1916,13 +1950,20 @@ elif [[ -n "$KERNEL_BUILD" && -d "$KERNEL_BUILD" ]]; then
     fi
 fi
 
+log_info "PLATFORM_BUILD=$PLATFORM_BUILD, KERNEL_BUILD=$KERNEL_BUILD, VENDOR_KERNEL_BUILD=$VENDOR_KERNEL_BUILD"
+
+# --- Vendor Kernel Build (processing ---
+if [[ "$VENDOR_KERNEL_BUILD" == ab:://* ]]; then
+    log_warn "The vendor kernel ab build string should start with 'ab://', not 'ab:://'. Remove the redundant ':'"
+    VENDOR_KERNEL_BUILD="${VENDOR_KERNEL_BUILD/::\/\//:\/\/}"
+fi
 if [[ "$VENDOR_KERNEL_BUILD" == ab://* ]]; then
     format_ab_vendor_kernel_build_string
     log_info "Downloading vendor kernel build $VENDOR_KERNEL_BUILD"
-    if [[ -z "$PLATFORM_BUILD" ]] || [[ "$PRODUCT" != "oriole" && "$PRODUCT" != "raven" ]]; then
-        download_vendor_kernel_for_direct_flash
-    else
+    if [[ -n "$PLATFORM_BUILD" ]] && [[ "$VENDOR_KERNEL_BUILD" == *raviole* ]]; then
         download_vendor_kernel_build
+    else
+        download_vendor_kernel_for_direct_flash
     fi
 elif [[ -n "$VENDOR_KERNEL_BUILD" && -d "$VENDOR_KERNEL_BUILD" ]]; then
     # Check if vendor kernel repo is provided
@@ -2035,7 +2076,7 @@ elif [[ -n "$GSI_BUILD" && -d "$GSI_BUILD" ]]; then
         fi
         if [[ ! -f "${GSI_BUILD}/system.img" ]]; then
             log_error "Can't find valid image in ${GSI_BUILD}"
-            exit
+            exit 1
         fi
     else
         gsi_image=$(find "$GSI_BUILD" -maxdepth 1 -type f -name "*_arm64-img-*.zip")
