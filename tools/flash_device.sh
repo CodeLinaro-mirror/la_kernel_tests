@@ -22,6 +22,7 @@ DISABLE_VERIFICATION=true
 EXTRA_OPTIONS=()
 DEVICE_VARIANT="userdebug"
 DEVICE_LUNCH_TARGET=
+FLASH_LOGICAL_PARTITION_FIRST=false
 
 ABI=
 PRODUCT=
@@ -45,6 +46,7 @@ GSI_BUILD=
 PLATFORM_BUILD=
 KERNEL_BUILD=
 VENDOR_KERNEL_BUILD=
+FASTBOOT_FLASH_OPTION=
 
 function print_help() {
     echo "Usage: $0 [OPTIONS]"
@@ -687,6 +689,28 @@ function download_platform_build() {
             exit 1
         fi
     done
+    if [[ "$PLATFORM_BUILD" == ab://git_sc* && "$PLATFORM_BUILD" != ab://git_sc-qpr3-release* ]] || \
+       [[ "$PLATFORM_BUILD" == ab://git_tm* && "$PLATFORM_BUILD" != ab://git_tm-qpr3-release* ]]; then
+        local _bootloader_path=""
+        if [[ "$PLATFORM_BUILD" == ab://git_sc* ]] && [[ "$PLATFORM_BUILD" != ab://git_sc-qpr3-release* ]]; then
+            _bootloader_path="git_sc-qpr3-release/$PRODUCT-userdebug/13458412/bootloader.img"
+        fi
+        if [[ "$PLATFORM_BUILD" == ab://git_tm* ]] && [[ "$PLATFORM_BUILD" != ab://git_tm-qpr3-release* ]]; then
+            _bootloader_path="git_tm-qpr3-release/$PRODUCT-userdebug/13458367/bootloader.img"
+        fi
+        log_info "Downloading bootloader.img from ab://$_bootloader_path"
+        eval "$FETCH_SCRIPT ab://$_bootloader_path"
+        exit_code=$?
+        if (( exit_code == 0 )); then
+            log_info "Downloaded ab://$_bootloader_path"
+        else
+            log_error "Fail to download ab://$_bootloader_path"
+            exit 1
+        fi
+        rm -rf "$_device_dir/bootloader.img" || { log_error "Failed to clean up $_device_dir/bootloader.img" && exit 1; }
+        create_soft_link "$DOWNLOAD_PATH/$_bootloader_path" "$_device_dir/bootloader.img"
+        SKIP_UPDATE_BOOTLOADER=true
+    fi
     PLATFORM_BUILD="$_device_dir"
     echo ""
 }
@@ -933,13 +957,28 @@ function download_vendor_kernel_for_direct_flash() {
 
 function reboot_device_into_bootloader() {
     if [[ -n "$ADB_SERIAL_NUMBER" ]] && (( $(adb devices | grep "$ADB_SERIAL_NUMBER" | wc -l) > 0 )); then
+        if [[ "$DISABLE_VERIFICATION" == "true" ]]; then
+            eval "adb -s $ADB_SERIAL_NUMBER root && adb -s $ADB_SERIAL_NUMBER disable-verity"
+        fi
         log_info "Reboot $ADB_SERIAL_NUMBER into bootloader"
         adb -s "$ADB_SERIAL_NUMBER" reboot bootloader
+        FLASH_LOGICAL_PARTITION_FIRST=true
     elif [[ -n "$FASTBOOT_SERIAL_NUMBER" ]] && (( $(fastboot devices | grep "$FASTBOOT_SERIAL_NUMBER" | wc -l) > 0 )); then
         log_info "Reboot $FASTBOOT_SERIAL_NUMBER into bootloader"
         fastboot -s "$FASTBOOT_SERIAL_NUMBER" reboot bootloader
     fi
     wait_for_device_in_fastboot
+    if [[ "$DISABLE_VERIFICATION" == "true" ]]; then
+        log_info "Running fastboot oem disable-verity and disable-verification commands"
+        eval "fastboot -s $FASTBOOT_SERIAL_NUMBER oem disable-verity && fastboot -s $FASTBOOT_SERIAL_NUMBER oem disable-verification"
+        exit_code=$?
+        if (( exit_code == 0 )); then
+            log_info "oem disable-verity and disable-verification commands succeeded"
+        else
+            log_info "Adding --disable-verification option in fastboot flash command"
+            FASTBOOT_FLASH_OPTION=" --disable-verification"
+        fi
+    fi
 }
 
 function flash_kernel_build() {
@@ -954,29 +993,42 @@ or use a vendor kernel build by flag -vkb, such as ab://kernel-android*-gs-pixel
 
     reboot_device_into_bootloader
     log_info "Flash GKI kernel from $KERNEL_BUILD"
-    log_info "Wiping the device"
-    local _flash_cmd="fastboot -s $FASTBOOT_SERIAL_NUMBER -w && sleep 5"
-    if [[ "$DISABLE_VERIFICATION" == "true" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER oem disable-verification"
+
+    local _bootloader_flash_cmd="fastboot -s $FASTBOOT_SERIAL_NUMBER -w && sleep 2"
+    _bootloader_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION boot "
+    if [[ -f "$KERNEL_BUILD/boot-lz4.img" ]]; then
+        _bootloader_flash_cmd+="$KERNEL_BUILD/boot-lz4.img && sleep 2"
+    elif [[ -f "$KERNEL_BUILD/boot-gz.img" ]]; then
+        _bootloader_flash_cmd+="$KERNEL_BUILD/boot-gz.img && sleep 2"
+    elif [[ -f "$KERNEL_BUILD/boot.img" ]]; then
+        _bootloader_flash_cmd+="$KERNEL_BUILD/boot.img && sleep 2"
     else
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER oem enable-verification"
+        log_error "There is no boot image in $KERNEL_BUILD"
+        exit 1
     fi
 
-    if [[ -f "$KERNEL_BUILD/boot-lz4.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash boot $KERNEL_BUILD/boot-lz4.img"
-    elif [[ -f "$KERNEL_BUILD/boot-gz.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash boot $KERNEL_BUILD/boot-gz.img"
-    elif [[ -f "$KERNEL_BUILD/boot.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash boot $KERNEL_BUILD/boot.img"
-    fi
-    if [[ -f "$KERNEL_BUILD/system_dlkm.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot && fastboot -s $FASTBOOT_SERIAL_NUMBER flash system_dlkm $KERNEL_BUILD/system_dlkm.img"
-    elif [[ -f "$KERNEL_BUILD/system_dlkm.flatten.ext4.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot && fastboot -s $FASTBOOT_SERIAL_NUMBER flash system_dlkm $KERNEL_BUILD/system_dlkm.flatten.ext4.img"
+    local _fastbootd_flash_cmd="fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot && sleep 5"
+    _fastbootd_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION system_dlkm "
+    if [[ -f "$KERNEL_BUILD/system_dlkm.img" ]] && [[ "$PRODUCT" != "raven" && "$PRODUCT" != "oriole" ]]; then
+        _fastbootd_flash_cmd+="$KERNEL_BUILD/system_dlkm.img && sleep 2"
+    elif [[ -f "$KERNEL_BUILD/system_dlkm.flatten.ext4.img" ]] && [[ "$PRODUCT" != "raven" && "$PRODUCT" != "oriole" ]]; then
+        _fastbootd_flash_cmd+="$KERNEL_BUILD/system_dlkm.flatten.ext4.img && sleep 2"
     elif [[ -f "$KERNEL_BUILD/system_dlkm.flatten.erofs.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot && fastboot -s $FASTBOOT_SERIAL_NUMBER flash system_dlkm $KERNEL_BUILD/system_dlkm.flatten.erofs.img"
+        _fastbootd_flash_cmd+="$KERNEL_BUILD/system_dlkm.flatten.erofs.img && sleep 2"
+    else
+        _fastbootd_flash_cmd=
     fi
-    _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
+
+    if [[ -z "$_fastbootd_flash_cmd" ]]; then
+        _flash_cmd="$_bootloader_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
+    elif [[ "$FLASH_LOGICAL_PARTITION_FIRST" == "true" ]]; then
+        _flash_cmd="$_fastbootd_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot bootloader && sleep 2"
+        _flash_cmd+=" && $_bootloader_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
+    else
+        _flash_cmd="$_bootloader_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot"
+        _flash_cmd+=" && sleep 5 && $_fastbootd_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER  reboot bootloader"
+        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
+    fi
 
     log_info "Flashing GKI kernel with: $_flash_cmd"
     eval "$_flash_cmd"
@@ -1023,26 +1075,36 @@ function check_fastboot_version() {
 function flash_vendor_kernel_build() {
     check_fastboot_version
 
-    log_info "Rebooting device into bootload and flashing vendor kernel from $VENDOR_KERNEL_BUILD"
+    log_info "Flashing vendor kernel from $VENDOR_KERNEL_BUILD"
     reboot_device_into_bootloader
-    local _flash_cmd="fastboot -s $FASTBOOT_SERIAL_NUMBER -w && sleep 5"
-    if [[ "$DISABLE_VERIFICATION" == "true" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER oem disable-verification"
-    fi
-    _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash boot $VENDOR_KERNEL_BUILD/boot.img"
+
+    local _bootloader_flash_cmd="fastboot -s $FASTBOOT_SERIAL_NUMBER -w && sleep 2"
+    _bootloader_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION boot $VENDOR_KERNEL_BUILD/boot.img"
     if [[ -f "$VENDOR_KERNEL_BUILD/dtb.img" && -f "$VENDOR_KERNEL_BUILD/initramfs.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash --dtb $VENDOR_KERNEL_BUILD/dtb.img vendor_boot:dlkm $VENDOR_KERNEL_BUILD/initramfs.img"
+        _bootloader_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION "
+        _bootloader_flash_cmd+="--dtb $VENDOR_KERNEL_BUILD/dtb.img vendor_boot:dlkm $VENDOR_KERNEL_BUILD/initramfs.img"
     fi
     if [[ -f "$VENDOR_KERNEL_BUILD/vendor_kernel_boot.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash vendor_kernel_boot $VENDOR_KERNEL_BUILD/vendor_kernel_boot.img"
+        _bootloader_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION "
+        _bootloader_flash_cmd+="vendor_kernel_boot $VENDOR_KERNEL_BUILD/vendor_kernel_boot.img"
     fi
-    _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash dtbo $VENDOR_KERNEL_BUILD/dtbo.img"
-    _flash_cmd+=" && sleep 2 && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot && sleep 2"
+    _bootloader_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION dtbo $VENDOR_KERNEL_BUILD/dtbo.img && sleep 2"
+
+    _fastbootd_flash_cmd+="fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot && sleep 2"
     if [[ -f "$VENDOR_KERNEL_BUILD/system_dlkm.img" ]]; then
-        _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash system_dlkm $VENDOR_KERNEL_BUILD/system_dlkm.img"
+        _fastbootd_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION system_dlkm $VENDOR_KERNEL_BUILD/system_dlkm.img"
     fi
-    _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash vendor_dlkm $VENDOR_KERNEL_BUILD/vendor_dlkm.img"
-    _flash_cmd+=" && sleep 2 && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
+    _fastbootd_flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash $FASTBOOT_FLASH_OPTION vendor_dlkm $VENDOR_KERNEL_BUILD/vendor_dlkm.img"
+    _fastbootd_flash_cmd+=" && sleep 2"
+
+    if [[ "$FLASH_LOGICAL_PARTITION_FIRST" == "true" ]]; then
+        _flash_cmd="$_fastbootd_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot bootloader && sleep 2"
+        _flash_cmd+=" && $_bootloader_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
+    else
+        _flash_cmd="$_bootloader_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot fastboot"
+        _flash_cmd+=" && sleep 5 && $_fastbootd_flash_cmd && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
+    fi
+
     log_info "Executing vendor kernel flash command: $_flash_cmd"
     eval "$_flash_cmd"
     exit_code=$?
@@ -1263,7 +1325,9 @@ function find_flashstation_binary() {
 }
 
 function flash_platform_build() {
-    if [[ "$SKIP_UPDATE_BOOTLOADER" == "true" ]] && [[ "$PLATFORM_BUILD" == ab://* ]] || [[ -z "$CL_FLASH_CLI" ]]; then
+    if [[ "$SKIP_UPDATE_BOOTLOADER" == "true" ]] && [[ "$PLATFORM_BUILD" == ab://* ]] || \
+       [[ "$PLATFORM_BUILD" == ab://git_sc* && "$PLATFORM_BUILD" != ab://git_sc-qpr3-release* ]] || \
+       [[ "$PLATFORM_BUILD" == ab://git_tm* && "$PLATFORM_BUILD" != ab://git_tm-qpr3-release* ]] || [[ -z "$CL_FLASH_CLI" ]]; then
         download_platform_build
     fi
 
@@ -1389,7 +1453,7 @@ function flash_gsi_build() {
         _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER delete-logical-partition product_$_current_slot"
         _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER erase system_$_current_slot"
         if [[ -f "$GSI_BUILD/system.img" ]]; then
-            _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash system $GSI_BUILD/system.img"
+            _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash  $FASTBOOT_FLASH_OPTION system $GSI_BUILD/system.img"
         else
             log_error "There is no system.img in $GSI_BUILD"
             exit 1
@@ -1397,7 +1461,7 @@ function flash_gsi_build() {
         if [[ -f "$GSI_BUILD/pvmfw.img" && "$_pvmfw_partition_output" == *yes* \
         && "$PRODUCT" != "raven" && "$PRODUCT" != "oriole" ]]; then
             _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot bootloader && sleep 3"
-            _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash pvmfw $GSI_BUILD/pvmfw.img"
+            _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER flash  $FASTBOOT_FLASH_OPTION pvmfw $GSI_BUILD/pvmfw.img"
         fi
         _flash_cmd+=" && fastboot -s $FASTBOOT_SERIAL_NUMBER reboot"
     fi
@@ -1448,6 +1512,7 @@ function prepare_to_flash_platform_build_from_local_directory () {
     fi
 
     if [[ "$SKIP_UPDATE_BOOTLOADER" == "true" ]]; then
+       log_info "Remove bootloader requirement in $PLATFORM_BUILD/android-info.txt"
         awk '! /bootloader/' "$PLATFORM_BUILD"/android-info.txt > temp && mv temp "$PLATFORM_BUILD"/android-info.txt
     fi
     # skip update radio.img
