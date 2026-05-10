@@ -10,9 +10,9 @@
 # --- Configuration Constants ---
 readonly DEFAULT_BISECT_CONFIG_FILENAME="bisect_changes.xml"
 readonly DEFAULT_OUTPUT_DIR="/tmp/out/$(date +%Y%m%d_%H%M%S)"
-readonly DEFAULT_TEST_RETRY=1
-readonly DEFAULT_SETUP_RETRY=3
-readonly DEFAULT_DOWNLOAD_RETRY=3
+readonly DEFAULT_TEST_RETRY=2
+readonly DEFAULT_SETUP_RETRY=2
+readonly DEFAULT_DOWNLOAD_RETRY=2
 readonly -A BUILD_TYPE_MAP=(
     ["pb"]="PLATFORM_BUILD"
     ["kb"]="KERNEL_BUILD"
@@ -1039,7 +1039,8 @@ function setup_and_test_combination() {
     if [[ "$DEVICE_TYPE" == "PHYSICAL" ]]; then
         setup_cmd_array=("$FLASH_DEVICE_SCRIPT" "-s" "$SERIAL_NUMBER")
     else
-        setup_cmd_array=("$LAUNCH_CVD_SCRIPT")
+        # Connect Cuttlefish with adb connection only. Skip webrtc autoconnect
+        setup_cmd_array=("$LAUNCH_CVD_SCRIPT" "--acloud-arg=--autoconnect" "--acloud-arg=adb")
     fi
 
     # Loop over all build types to construct command
