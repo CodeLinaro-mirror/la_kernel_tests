@@ -666,7 +666,7 @@ function query_latest_build_id() {
     fi
 
     local build_id
-    build_id=$(grep -oP '"bid":\s*"\K[^"]+' "${build_info}")
+    build_id=$(sed -nE 's/.*"bid":[[:space:]]*"([^"]+).*/\1/p' "${build_info}" | head -n 1)
     if [[ -z "$build_id" ]]; then
         log_error "Failed to parse 'bid' from ${build_info}"
         return $EXIT_FAILURE
@@ -832,7 +832,7 @@ function common_lib::get_active_manifest_name() {
         manifest_name=$(basename "$(readlink "$manifest_file")")
     elif [[ -f "$manifest_file" ]]; then
         local included_name
-        included_name=$(grep -oP '<include name="\K[^"]*' "$manifest_file" | head -n 1)
+        included_name=$(sed -nE 's/.*<include name="([^"]*)".*/\1/p' "$manifest_file" | head -n 1)
         if [[ -n "$included_name" ]]; then
             manifest_name="$included_name"
         else
