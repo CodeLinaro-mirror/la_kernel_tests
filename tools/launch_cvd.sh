@@ -223,9 +223,8 @@ function create_kernel_build_cmd() {
     local cf_kernel_repo_root=$1
     local cf_kernel_version=$2
 
-    local regex="((?<=android-)mainline|(\K\d+\.\d+(?=-stable)))|((?:android)\K\d+)"
     local android_version
-    android_version=$(grep -oP "$regex" <(echo "$cf_kernel_version"))
+    android_version=$(echo "$cf_kernel_version" | sed -nE 's/.*android-mainline.*/mainline/p; t; s/.*android-([0-9]+\.[0-9]+)-stable.*/\1/p; t; s/.*android([0-9]+).*/\1/p' | head -n 1)
     local build_cmd=""
     if [[ -f "$cf_kernel_repo_root/common-modules/virtual-device/BUILD.bazel" ]]; then
         # support android-mainline, android16, android15, android14, android13
@@ -264,9 +263,8 @@ function create_kernel_build_cmd() {
 function create_kernel_build_path() {
     local cf_kernel_version=$1
 
-    local regex="((?<=android-)mainline|(\K\d+\.\d+(?=-stable)))|((?:android)\K\d+)"
     local android_version
-    android_version=$(grep -oP "$regex" <(echo "$cf_kernel_version"))
+    android_version=$(echo "$cf_kernel_version" | sed -nE 's/.*android-mainline.*/mainline/p; t; s/.*android-([0-9]+\.[0-9]+)-stable.*/\1/p; t; s/.*android([0-9]+).*/\1/p' | head -n 1)
     if [[ "$android_version" == "mainline" ]] || greater_than_or_equal_to "$android_version" "14"; then
         # support android-mainline, android16, android15, android14
         echo "out/virtual_device_x86_64/dist"
@@ -301,12 +299,12 @@ function greater_than_or_equal_to() {
 function parse_kernel_version() {
     local manifest_output="$1"
     local version=""
-    version=$(grep -oP 'common-modules/virtual-device.*revision="\K[^"]*' <(echo "$manifest_output") | head -n 1)
+    version=$(echo "$manifest_output" | sed -nE 's/.*common-modules\/virtual-device.*revision="([^"]*)".*/\1/p' | head -n 1)
 
     if [[ "$version" =~ ^[0-9a-f]{40}$ ]]; then
-        local fallback_version=$(grep -oP 'kernel/superproject.*revision="\K[^"]*' <(echo "$manifest_output") | head -n 1)
+        local fallback_version=$(echo "$manifest_output" | sed -nE 's/.*kernel\/superproject.*revision="([^"]*)".*/\1/p' | head -n 1)
         if [[ -z "$fallback_version" ]]; then
-            fallback_version=$(grep -oP 'default revision="(refs/tags/)?\K[^"]*' <(echo "$manifest_output") | head -n 1)
+            fallback_version=$(echo "$manifest_output" | sed -nE 's/.*default revision="(refs\/tags\/)?([^"]*)".*/\2/p' | head -n 1)
         fi
 
         if [[ -n "$fallback_version" ]]; then
@@ -326,11 +324,11 @@ function find_repo() {
     case "$manifest_output" in
         *platform/superproject*)
             PLATFORM_REPO_ROOT="$PWD"
-            PLATFORM_VERSION=$(grep -oP 'platform/superproject.*revision="\K[^"]*' <(echo "$manifest_output"))
+            PLATFORM_VERSION=$(echo "$manifest_output" | sed -nE 's/.*platform\/superproject.*revision="([^"]*)".*/\1/p' | head -n 1)
             if [[ -z "$PLATFORM_VERSION" ]]; then
                 # on main branch, <superproject> tag doesn't have a 'revision' attribute
                 # try to extract the information from <default> tag
-                PLATFORM_VERSION=$(grep -oP 'default revision="(refs/tags/)?\K[^"]*' <(echo "$manifest_output"))
+                PLATFORM_VERSION=$(echo "$manifest_output" | sed -nE 's/.*default revision="(refs\/tags\/)?([^"]*)".*/\2/p' | head -n 1)
             fi
             if [[ -z "$PLATFORM_VERSION" ]]; then
                 fail_error "Could not find platform version information."
