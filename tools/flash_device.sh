@@ -1843,7 +1843,7 @@ function is_device_ready_for_adb_command() {
 
 function is_device_boot_complete() {
     local _output
-    _sys_boot_output=$(adb -s "$ADB_SERIAL_NUMBER" shell getprop sys.boot_completed)
+    _sys_boot_output=$(adb -s "$ADB_SERIAL_NUMBER" shell getprop sys.boot_completed < /dev/null)
     if [[ "$_sys_boot_output" == "1" ]]; then
         log_info "Device $ADB_SERIAL_NUMBER is sys.boot_completed."
         return 0 # Succeed.
@@ -1896,7 +1896,7 @@ function get_device_info_from_adb() {
 
     local kernel_exit_code=0
     local raw_kernel
-    raw_kernel=$(timeout -k 1s 5s adb -s "$ADB_SERIAL_NUMBER" shell uname -r) || kernel_exit_code=$?
+    raw_kernel=$(timeout -k 1s 5s adb -s "$ADB_SERIAL_NUMBER" shell uname -r < /dev/null) || kernel_exit_code=$?
     if (( kernel_exit_code == 124 || kernel_exit_code == 137 )); then
         log_warn "Timeout (5s) reached while retrieving uname -r for device '$ADB_SERIAL_NUMBER'."
     fi

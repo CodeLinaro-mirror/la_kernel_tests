@@ -151,7 +151,7 @@ function device_util::init() {
     # Determine Type (Physical vs Virtual)
     if [[ "$_DEVICE_UTIL_MODE" == "ADB" ]]; then
         local product
-        product=$(adb -s "$_DEVICE_UTIL_ADB_SERIAL" shell getprop ro.product.board)
+        product=$(adb -s "$_DEVICE_UTIL_ADB_SERIAL" shell getprop ro.product.board < /dev/null)
         if [[ "$product" == "cutf" || "$product" == "vsoc_x86"* ]]; then
             _DEVICE_UTIL_TYPE="VIRTUAL"
         else
@@ -323,7 +323,7 @@ function adb_getprop() {
 
     local exit_code=0
     local raw_output
-    raw_output=$(timeout -k 1s "$timeout_spec" adb -s "$device_serial" shell getprop "$property_name") || exit_code=$?
+    raw_output=$(timeout -k 1s "$timeout_spec" adb -s "$device_serial" shell getprop "$property_name" < /dev/null) || exit_code=$?
 
     if (( exit_code == 124 || exit_code == 137 )); then
         log_warn "Timeout ($timeout_spec) reached while retrieving $property_name for device '$device_serial'."
