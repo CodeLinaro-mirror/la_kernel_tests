@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATest Matrix Report</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; background: #f5f7f9; }
+        h1, h2 { color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .table-container { max-height: 80vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-radius: 8px; background: #fff; margin-bottom: 30px; }
+        table { border-collapse: collapse; width: 100%; text-align: left; }
+        th, td { padding: 12px 15px; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; position: sticky; top: 0; box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1); z-index: 10; color: #555; }
+        tr:hover { background-color: #f1f5f9; }
+        .PASS { color: #10b981; font-weight: bold; }
+        .FAIL { color: #ef4444; font-weight: bold; }
+        .IGNORED { color: #f59e0b; }
+        .NOT_EXECUTED { color: #9ca3af; font-style: italic; }
+        a.FAIL-link { color: #ef4444; text-decoration: underline; }
+        a.FAIL-link:hover { color: #b91c1c; }
+        .details-section { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 30px; }
+        details { margin-bottom: 10px; border: 1px solid #eee; border-radius: 4px; padding: 5px; }
+        summary { font-weight: bold; cursor: pointer; padding: 5px; background: #fafafa; }
+        pre { background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: Consolas, monospace; font-size: 0.9em; }
+        .crash-warning { border: 2px solid #ef4444; background: #fef2f2; color: #991b1b; }
+        .crash-warning h2 { color: #b91c1c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ATest Execution Matrix</h1>
+
+        {% if crashes %}
+        <div class="details-section crash-warning">
+            <h2>⚠️ Runner Crashes Detected</h2>
+            <p>The following environments failed to produce complete test results, likely due to a build failure or runner crash:</p>
+            {% for disp_name, log in crashes.items() %}
+                <details open>
+                    <summary><h3># {{ disp_name }}</h3></summary>
+                    <pre><code>{{ log }}</code></pre>
+                </details>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if job_configs %}
+        <div class="details-section">
+            <h2>Environment Configuration</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Display Name</th>
+                        <th>Build Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in job_configs %}
+                    <tr>
+                        <td>{{ job.job_id }}</td>
+                        <td>{{ job.display_name or job.job_id }}</td>
+                        <td>
+                            {% if job.builds %}
+                                <ul>
+                                {% for build_type, build_info in job.builds.items() %}
+                                    <li><strong>{{ build_type }}</strong>: {{ build_info.get('target', 'N/A') }} ({{ build_info.get('branch', 'N/A') }} @ {{ build_info.get('build_id', 'N/A') }})</li>
+                                {% endfor %}
+                                </ul>
+                            {% else %}
+                                N/A
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {% if summary_data %}
+        <div class="details-section">
+            <h2>Test Execution Summary</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Environment</th>
+                        <th>PASS</th>
+                        <th>FAIL</th>
+                        <th>IGNORED</th>
+                        <th>NOT_EXECUTED</th>
+                        <th>TOTAL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in summary_data %}
+                    <tr>
+                        <td><strong>{{ row.Environment }}</strong></td>
+                        <td class="PASS">{{ row.PASS }}</td>
+                        <td class="FAIL">{{ row.FAIL }}</td>
+                        <td class="IGNORED">{{ row.IGNORED }}</td>
+                        <td class="NOT_EXECUTED">{{ row.NOT_EXECUTED }}</td>
+                        <td>{{ row.TOTAL }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
+        {% if retried_tests %}
+        <div class="details-section">
+            <h2>⚠️ Retried / Duplicate Test Executions</h2>
+            <p>The following tests were executed multiple times within the same job (e.g. Flaky test auto-retries). The matrix table below prioritizes <strong>FAIL</strong> statuses for these cases.</p>
+            {% for env, tests in retried_tests.items() %}
+                <h3># {{ env }}</h3>
+                <ul>
+                {% for test_name, statuses in tests.items() %}
+                    <li><strong>{{ test_name }}</strong> : Executed {{ statuses|length }} times ➜ [{{ statuses|join(', ') }}]</li>
+                {% endfor %}
+                </ul>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <h2>Test Matrix</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Test Case (Total: {{ total_tests }})</th>
+                        {% for col in columns %}
+                        <th>{{ col }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row_idx in range(index|length) %}
+                    <tr>
+                        <td><strong>{{ index[row_idx] }}</strong></td>
+                        {% for col_idx in range(columns|length) %}
+                            {% set status = data[row_idx][col_idx] %}
+                            {% set col_name = columns[col_idx] %}
+                            {% set job_id = get_job_id(col_name) %}
+                            <td class="{{ status }}">
+                                {% if status == 'FAIL' %}
+                                    <a href="./{{ job_id }}/local_log_file_list.html" class="FAIL-link" target="_blank" title="Click to view logs">{{ status }}</a>
+                                {% else %}
+                                    {{ status }}
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if error_details %}
+        <div class="details-section">
+            <h2>Failure & Error Details</h2>
+            {% for disp_name, tests in error_details.items() %}
+                <h3># {{ disp_name }}</h3>
+                {% for test_name, details in tests.items() %}
+                    <details>
+                        <summary>## {{ test_name }}</summary>
+                        <pre><code>{{ details }}</code></pre>
+                    </details>
+                {% endfor %}
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if slowest_tests %}
+        <div class="details-section">
+            <h2>Top 10 Slowest Test Executions</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Environment</th>
+                        <th>Test Case</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for st in slowest_tests %}
+                    <tr>
+                        <td>{{ st.environment }}</td>
+                        <td>{{ st.test_name }}</td>
+                        <td>{{ st.time }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
