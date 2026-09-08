@@ -1,0 +1,7 @@
+# Matrix Runner Outputs & States
+/out/
+/reports/
+
+# Ignore user's local or temporary configurations
+/configs/local_*.json
+/configs/temp_*.json
