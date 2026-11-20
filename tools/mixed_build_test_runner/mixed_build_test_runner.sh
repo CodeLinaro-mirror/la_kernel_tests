@@ -737,6 +737,21 @@ for (( i=0; i<$NUM_JOBS; i++ )); do
                 ATEST_LOG_DIR=$(grep 'Test logs:' "$ATEST_LOG_FILE" \
                     | awk '{print $3}' | sed 's|/log$||' | head -n 1) || true
 
+                # When run by a coding agent, atest mutes its own stdout, so
+                # "Test logs:" never shows up. Fall back to the line it prints
+                # before going quiet:
+                #   Atest results and logs directory: /tmp/atest_result_<user>/<run>
+                # That line is printed up front, even if atest gets killed
+                # later, so only trust it when test_result has content. The
+                # pattern has no '^' because the line can start mid-line.
+                if [[ ! -d "$ATEST_LOG_DIR" ]]; then
+                    atest_results_dir=$(sed -n 's/.*Atest results and logs directory: //p' \
+                        "$ATEST_LOG_FILE" | head -n 1) || true
+                    if [[ -n "$atest_results_dir" && -s "${atest_results_dir}/test_result" ]]; then
+                        ATEST_LOG_DIR="$atest_results_dir"
+                    fi
+                fi
+
                 REPORT_DEST="${REPORTS_DIR}/${RUN_ID}/${JOB_ID}"
                 mkdir -p "$REPORT_DEST"
 

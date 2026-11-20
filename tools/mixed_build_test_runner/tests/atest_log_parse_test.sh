@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # Tests for the atest log directory parsing in mixed_build_test_runner.sh.
 #
-# The property that matters: when atest prints no "Test logs:" line, the job
-# must degrade on its own and the matrix run must carry on. Before the fix the
-# failing grep ended the whole script, which also skipped virtual device
-# teardown and leaked a cloud instance.
+# Two properties matter.
+#
+# When atest prints no "Test logs:" line, the job must degrade on its own and
+# the matrix run must carry on. Before the fix the failing grep ended the whole
+# script, which also skipped virtual device teardown and leaked a cloud
+# instance.
+#
+# When atest is started by a coding agent it never prints that line, because it
+# mutes its own stdout. The results must still be found, through the line that
+# names the directory before atest starts. Before the fix every job of an agent
+# run lost its results, and the report listed all of them as crashes although
+# every test had passed.
 
 set -uo pipefail
 
@@ -91,6 +99,11 @@ function log_has()         { grep -qF -- "$1" "${SANDBOX}/state/run.log" && echo
 function reached_summary() { log_has "Matrix Run Summary:"; }
 function deletes()         { grep -c '^acloud delete' "${SANDBOX}/state/acloud.log" || true; }
 function report_of()       { echo "${SANDBOX}/state/reports/${RUN_ID}/$1"; }
+# Whether the results a stubbed atest finished writing reached a job's report.
+function has_results() {
+    [[ "$(cat "$(report_of "$1")/test_result" 2> /dev/null)" == '{"stub": "result"}' ]] \
+        && echo yes || echo no
+}
 
 make_sandbox "$SANDBOX"
 printf '127.0.0.1:6520\tdevice\n' > "${SANDBOX}/state/adb_devices"
@@ -157,6 +170,64 @@ run_matrix "$PHYS_CONFIG" env TEST_STUB_MODE=nologline
 check "physical: the run is not aborted" "yes" "$(reached_summary)"
 check "physical: acloud is never called" "0" "$(deletes)"
 
+section "atest is run from a terminal"
+
+# What a real atest prints, as opposed to the 'success' stub above: it names
+# the results directory before it starts, and prints "Test logs:" at the end.
+run_matrix "$CONFIG" env TEST_STUB_MODE=terminal
+check "terminal: both jobs succeed" "yes" "$(log_has 'TOTAL SUCCESS: 2')"
+check "terminal: no warning about the log path" "no" \
+    "$(log_has 'Could not extract ATest log directory')"
+check "terminal: the results are copied" "yes" "$(has_results job_one)"
+check "terminal: the logs beside them are copied" "yes" \
+    "$([[ -f "$(report_of job_one)/atest.log" ]] && echo yes || echo no)"
+
+section "atest is started by a coding agent"
+
+run_matrix "$CONFIG" env TEST_STUB_MODE=agent
+check "agent: the run exits cleanly" "0" "$(rc)"
+check "agent: both jobs succeed" "yes" "$(log_has 'TOTAL SUCCESS: 2')"
+check "agent: no warning about the log path" "no" \
+    "$(log_has 'Could not extract ATest log directory')"
+check "agent: the results are copied for job one" "yes" "$(has_results job_one)"
+check "agent: the results are copied for job two" "yes" "$(has_results job_two)"
+check "agent: the logs beside them are copied" "yes" \
+    "$([[ -f "$(report_of job_one)/atest.log" ]] && echo yes || echo no)"
+check "agent: the copy is reported" "yes" "$(log_has 'Copying test logs from')"
+check "agent: stdout is still kept" "yes" \
+    "$([[ -s "$(report_of job_one)/runner_stdout.log" ]] && echo yes || echo no)"
+check "agent: both devices are torn down" "2" "$(deletes)"
+
+section "the directory is named where it is hard to find"
+
+# Two things an agent run can do to the output. A test may print "Test logs:"
+# itself, and stderr may be in the middle of a line when atest exits and
+# flushes the line that names the directory.
+run_matrix "$CONFIG" env TEST_STUB_MODE=agent_noisy
+check "noisy: both jobs succeed" "yes" "$(log_has 'TOTAL SUCCESS: 2')"
+check "noisy: no warning about the log path" "no" \
+    "$(log_has 'Could not extract ATest log directory')"
+check "noisy: the results are copied for job one" "yes" "$(has_results job_one)"
+check "noisy: the results are copied for job two" "yes" "$(has_results job_two)"
+
+section "atest names its directory and dies before writing results"
+
+# Naming the directory is the first thing atest does, so that line says nothing
+# about what is in it. A directory without results is left alone, as it always
+# was, and the report shows the end of the job's stdout instead.
+run_matrix "$CONFIG" env TEST_STUB_MODE=noresult
+check "noresult: the run is not aborted" "yes" "$(reached_summary)"
+check "noresult: both jobs are marked as errors" "yes" "$(log_has 'TOTAL ERROR: 2')"
+check "noresult: the second job still runs" "yes" "$(log_has 'Job Two')"
+check "noresult: the missing log path is reported" "yes" \
+    "$(log_has 'Could not extract ATest log directory')"
+check "noresult: nothing is copied" "no" "$(log_has 'Copying test logs from')"
+check "noresult: the empty result file stays out of the report" "no" \
+    "$([[ -e "$(report_of job_one)/test_result" ]] && echo yes || echo no)"
+check "noresult: stdout is still kept" "yes" \
+    "$([[ -s "$(report_of job_one)/runner_stdout.log" ]] && echo yes || echo no)"
+check "noresult: both devices are still torn down" "2" "$(deletes)"
+
 section "the old code really did abort (regression proof)"
 
 # Put the pre-fix line back in the sandbox copy only, and show the difference.
@@ -181,6 +252,34 @@ then
 else
     skip_test "old code: the pre-fix behaviour is reproduced" \
         "the guarded line has changed; update this test"
+fi
+
+section "the old code really did lose an agent run's results (regression proof)"
+
+# The same idea for the second lookup: take it back out of a fresh sandbox
+# copy, and skip if the line is no longer there to be taken out.
+cp "${RUNNER_DIR}/mixed_build_test_runner.sh" "$RUNNER"
+chmod +x "$RUNNER"
+if python3 - "$RUNNER" <<'PY'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+fixed = """                if [[ ! -d "$ATEST_LOG_DIR" ]]; then"""
+broken = """                if false; then"""
+if src.count(fixed) != 1:
+    sys.exit(1)
+open(path, "w").write(src.replace(fixed, broken))
+PY
+then
+    run_matrix "$CONFIG" env TEST_STUB_MODE=agent
+    check "old code: the agent run itself still passes" "yes" \
+        "$(log_has 'TOTAL SUCCESS: 2')"
+    check "old code: its results never reach the report" "no" "$(has_results job_one)"
+    check "old code: all that is left is the warning" "yes" \
+        "$(log_has 'Could not extract ATest log directory')"
+else
+    skip_test "old code: an agent run loses its results" \
+        "the second lookup has changed; update this test"
 fi
 
 if (( TESTS_FAIL > 0 )); then
