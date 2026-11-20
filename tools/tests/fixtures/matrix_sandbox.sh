@@ -9,7 +9,7 @@
 #   tools/                          real common_lib.sh and lib/device_util.sh
 #   tools/launch_cvd.sh             stub, behaviour from LAUNCH_STUB_MODE
 #   tools/flash_device.sh           stub, behaviour from FLASH_STUB_MODE
-#   tools/run_test_only.sh          stub, always reports a passing run
+#   tools/run_test_only.sh          stub, behaviour from TEST_STUB_MODE
 #   tools/mixed_build_test_runner/  the script under test
 #   bin/                            stubs for adb, acloud, pontis (put on PATH)
 #   state/                          scratch space the stubs write to
@@ -117,10 +117,39 @@ STUB
     #   nologline passes but prints no log path, like an atest that died early
     #   crash     fails with no log path and no result counts
     #   hang      never returns, to exercise the test timeout
+    #
+    # The remaining modes print what a real atest prints. It names its results
+    # directory twice: once before it starts, and again as "Test logs:" when
+    # it has finished.
+    #   terminal    passes the way atest does for a person, with both lines
+    #   agent       passes the way atest does under a coding agent: results go
+    #               to stderr and stdout is muted, so there is no "Test logs:"
+    #               and the directory is only named when atest exits
+    #   agent_noisy the same, made hard to read (see the stub)
+    #   noresult    names its directory and then dies before writing results,
+    #               like an atest that is killed by the test timeout
     cat > "$root/tools/run_test_only.sh" <<'STUB'
 #!/usr/bin/env bash
 set -u
 MODE="${TEST_STUB_MODE:-success}"
+
+# The directory a real atest writes to. test_result is there from the start
+# and stays empty until atest finishes.
+function start_results_dir() {
+    RESULTS_DIR="${STUB_STATE_DIR:?}/atest_result/run"
+    rm -rf "$RESULTS_DIR"
+    mkdir -p "$RESULTS_DIR/log"
+    : > "$RESULTS_DIR/test_result"
+    echo "stub atest log" > "$RESULTS_DIR/atest.log"
+}
+function name_results_dir() {
+    echo "Atest results and logs directory: ${RESULTS_DIR}"
+    echo "Or use: ${RESULTS_DIR%/*}/CURRENT"
+}
+function finish_results_dir() {
+    echo '{"stub": "result"}' > "$RESULTS_DIR/test_result"
+}
+
 case "$MODE" in
     hang)
         sleep 3000
@@ -132,6 +161,37 @@ case "$MODE" in
     nologline)
         echo "Passed: 1, Failed: 0"
         exit 0
+        ;;
+    terminal)
+        start_results_dir
+        name_results_dir
+        echo "Passed: 1, Failed: 0"
+        finish_results_dir
+        echo "Test logs: ${RESULTS_DIR}/log"
+        exit 0
+        ;;
+    agent)
+        start_results_dir
+        echo "Passed: 1, Failed: 0" >&2
+        finish_results_dir
+        name_results_dir
+        exit 0
+        ;;
+    agent_noisy)
+        start_results_dir
+        echo "Passed: 1, Failed: 0" >&2
+        # Test output that happens to mention the other line.
+        echo "    Test logs: ${STUB_STATE_DIR}/no_such_dir/log" >&2
+        finish_results_dir
+        # stderr is in the middle of a line when atest exits and flushes.
+        printf 'Test Result uploaded to http://ab/I0' >&2
+        name_results_dir
+        exit 0
+        ;;
+    noresult)
+        start_results_dir
+        name_results_dir
+        exit 143
         ;;
     *)
         echo "Passed: 1, Failed: 0"

@@ -14,6 +14,7 @@ belongs in the test that enforces the fix.
 | Somebody else's Cuttlefish disappeared | [4](#4-a-device-that-was-not-ours-got-deleted) |
 | A cloud instance is still running after the matrix ended | [5](#5-a-cloud-instance-is-left-running) |
 | The matrix stops after the first job | [6](#6-the-whole-matrix-stops-after-one-job) |
+| Every job is listed as a runner crash although its tests passed | [7](#7-every-job-is-reported-as-a-crash-although-the-tests-passed) |
 
 ---
 
@@ -148,6 +149,50 @@ real.
 
 ---
 
+## 7. Every job is reported as a crash although the tests passed
+
+**Symptom.** A coding agent started the matrix. Every job passes, yet the
+runner warns "Could not extract ATest log directory", each job directory holds
+nothing but 'runner_stdout.log', and the report lists every job under "Runner
+Crashes Detected". The same command typed into a terminal works.
+
+**Cause.** atest changes its output when its environment tells it an agent is
+the caller ('is_agentic_invocation' in tools/asuite/atest/atest_utils.py).
+Results go to stderr, and stdout is sent to /dev/null once logging is set up.
+"Test logs:" is printed after that, so it never appears, and it was the only
+line the runner looked for. The results were on disk the whole time, in the
+directory atest names before it goes quiet:
+
+```
+Atest results and logs directory: /tmp/atest_result_<user>/<run>
+```
+
+**How to confirm.** In the job's 'runner_stdout.log' that line is at the very
+end instead of where atest starts, and there is no "Test logs:". In the
+'atest.log' of the directory it names, the result summary is logged as STDERR
+and "Test logs:" as STDOUT.
+
+**Now.** When "Test logs:" does not lead to a directory, the runner takes the
+one from that line, but only if the 'test_result' in it has content. The line
+is printed before atest does any work, so by itself it also matches an atest
+that was killed half way, and copying an empty 'test_result' makes the report
+show a JSON error for the job instead of the end of its log.
+
+> [!WARNING]
+> Do not unset the variables to get the old output back. The same switch keeps
+> atest from opening a browser for OAuth and from asking which test was meant,
+> and an agent can answer neither.
+
+A report that was lost this way can be rebuilt while /tmp still holds the
+directories: copy each one into its job directory and run 'matrix-reporter'
+again.
+
+**Guarded by** [tools/mixed_build_test_runner/tests/atest_log_parse_test.sh](../tests/atest_log_parse_test.sh),
+which also takes the second lookup back out of a sandbox copy to prove the
+results really were lost.
+
+---
+
 ## Things that look like fixes but are not
 
 **Raising acloud's --boot-timeout.** The help text does not mention it, but the
@@ -165,3 +210,5 @@ need it, but it is off by default and the command line is byte for byte
 unchanged when it is unset.
 
 **'timeout --foreground'.** See section 1.
+
+**Hiding the agent from atest.** See section 7.
