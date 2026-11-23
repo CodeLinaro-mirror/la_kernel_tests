@@ -942,6 +942,16 @@ function download_vendor_kernel_build() {
         eval "$FETCH_SCRIPT $_build_info/$_pattern" || exit_code=$?
         if (( exit_code == 0 )); then
             log_info "Downloaded $_build_info/$_pattern"
+        elif [[ "$_pattern" == "abi_gki_aarch64_pixel" ]]; then
+            log_info "$_build_info/$_pattern not found; trying $_build_info/pixel"
+            if eval "$FETCH_SCRIPT $_build_info/pixel"; then
+                _pattern="pixel"
+                log_info "Downloaded $_build_info/$_pattern"
+            else
+                log_warn "Optional ABI symbol list not found; skipping CRC verification"
+                HAVE_VENDOR_KERNEL_ABI=false
+                continue
+            fi
         else
             log_error "Failed to download $_build_info/$_pattern"
             exit 1
@@ -950,7 +960,7 @@ function download_vendor_kernel_build() {
         local _new_file_name="$_pattern"
         if [[ "$_pattern" == "vendor_dev_nodes_fragment.img" ]]; then
             _new_file_name="vendor_ramdisk_fragment_extra.img"
-        elif [[ "$_pattern" == "abi_gki_aarch64_pixel" ]]; then
+        elif [[ "$_pattern" == "abi_gki_aarch64_pixel" || "$_pattern" == "pixel" ]]; then
             _new_file_name="extracted_symbols"
         elif [[ "$_pattern" == "kernel_aarch64_*Module.symvers" ]]; then
             _new_file_name="kernel_aarch64_Module.symvers"
